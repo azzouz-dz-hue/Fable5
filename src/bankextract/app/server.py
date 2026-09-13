@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+from ..browser import browser_installed
 from ..config import DEFAULT_CONFIG_PATH, BankConfig, Settings, load_settings, local_overlay_path
 from ..connectors import build_connector
 from ..otp import available_providers
@@ -98,6 +99,7 @@ def creer_application(
             "operation": operation.en_dict() if operation else None,
             "occupe": executeur.occupe,
             "totaux": _totaux_lisibles(base),
+            "navigateur_pret": browser_installed(courant.browser),
             "dossiers": {
                 "releves": str(courant.paths.downloads_dir.resolve()),
                 "exports": str(courant.paths.exports_dir.resolve()),
@@ -159,6 +161,38 @@ def creer_application(
         return {"message": "Identifiants enregistrés dans le coffre de Windows."}
 
     # ------------------------------------------------------------------ opérations
+
+    @application.post("/api/operations/preparer")
+    def demarrer_preparation() -> dict:
+        """Télécharge le navigateur. Indispensable au premier lancement."""
+        courant = lire_settings()
+
+        def travail(operation: Operation) -> str:
+            import subprocess
+            import sys
+
+            courant.paths.ensure()
+            if browser_installed(courant.browser):
+                return "Le navigateur est déjà installé."
+
+            operation.lignes.append("Téléchargement du navigateur (environ 150 Mo)…")
+            operation.lignes.append("Cela peut prendre plusieurs minutes.")
+            issue = subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                capture_output=True,
+                text=True,
+                timeout=1800,
+            )
+            for ligne in (issue.stdout or "").splitlines()[-12:]:
+                operation.lignes.append(ligne)
+            if issue.returncode != 0:
+                raise RuntimeError(
+                    "Téléchargement impossible. Vérifiez votre connexion, puis réessayez. "
+                    + (issue.stderr or "").strip()[:300]
+                )
+            return "Navigateur installé. Le poste est prêt."
+
+        return _lancer(executeur, "Préparation du poste", travail)
 
     @application.post("/api/operations/enregistrer/{cle}")
     def demarrer_enregistrement(cle: str) -> dict:

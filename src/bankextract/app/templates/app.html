@@ -139,6 +139,17 @@
     <div class="tuile"><div class="etiquette">Dernière extraction</div><div class="valeur petite" id="t-derniere">—</div></div>
   </div>
 
+  <section class="carte" id="bloc-preparation" hidden>
+    <h2>Une dernière étape avant de commencer</h2>
+    <p style="margin:0 0 14px;color:var(--texte-doux)">
+      Le navigateur dont le logiciel a besoin n'est pas encore installé. Il se
+      télécharge une seule fois, environ 150 Mo.
+    </p>
+    <div class="actions">
+      <button class="principal" id="bouton-preparer" onclick="preparer()">Préparer le poste</button>
+    </div>
+  </section>
+
   <section class="carte" id="bloc-operation" hidden>
     <h2 id="operation-titre">Opération</h2>
     <div class="bandeau" id="operation-bandeau"></div>
@@ -231,6 +242,7 @@
 const $ = (id) => document.getElementById(id);
 let banqueCourante = null;
 let occupe = false;
+let navigateurPret = true;
 
 async function appeler(url, options = {}) {
   const reponse = await fetch(url, {
@@ -267,7 +279,8 @@ function afficherBanques(banques) {
         ${pastille(b.identifiants_prets, "identifiants déposés", "identifiants à déposer")}
         ${pastille(b.parcours_enregistre, "parcours enregistré", "parcours à enregistrer")}
       </div>
-      ${b.parcours_enregistre && b.identifiants_prets ? "" :
+      ${!navigateurPret ? `<p class="aide" style="margin:-4px 0 10px">Préparez d'abord le poste (ci-dessus).</p>` :
+        b.parcours_enregistre && b.identifiants_prets ? "" :
         `<p class="aide" style="margin:-4px 0 10px">Pour extraire : ${
           [!b.identifiants_prets ? "déposez vos identifiants" : null,
            !b.parcours_enregistre ? "enregistrez le parcours" : null]
@@ -276,12 +289,13 @@ function afficherBanques(banques) {
         <button onclick="ouvrirIdentifiants('${b.cle}', '${b.libelle.replace(/'/g, "\\'")}')"
                 ${occupe ? "disabled" : ""}>Déposer les identifiants</button>
         <button onclick="lancer('enregistrer', '${b.cle}')"
-                ${occupe || !b.url ? "disabled" : ""}>Enregistrer le parcours</button>
+                ${occupe || !b.url || !navigateurPret ? "disabled" : ""}>Enregistrer le parcours</button>
         <button class="principal" onclick="lancer('extraire', '${b.cle}')"
-                ${occupe || !b.parcours_enregistre || !b.identifiants_prets ? "disabled" : ""}>
+                ${occupe || !navigateurPret || !b.parcours_enregistre || !b.identifiants_prets
+                  ? "disabled" : ""}>
           Lancer l'extraction</button>
         <button onclick="lancer('essai', '${b.cle}')"
-                ${occupe || !b.parcours_enregistre ? "disabled" : ""}>Essai visible</button>
+                ${occupe || !navigateurPret || !b.parcours_enregistre ? "disabled" : ""}>Essai visible</button>
         <button class="discret" onclick="retirer('${b.cle}', '${b.libelle.replace(/'/g, "\\'")}')"
                 ${occupe ? "disabled" : ""}>Retirer</button>
       </div>
@@ -320,10 +334,23 @@ async function rafraichir() {
     $("t-ecritures").textContent = etat.totaux.ecritures;
     $("t-derniere").textContent = etat.totaux.derniere_extraction || "jamais";
     $("dossier-exports").textContent = etat.dossiers.exports;
+    $("bloc-preparation").hidden = etat.navigateur_pret;
+    $("bouton-preparer").disabled = occupe;
+    navigateurPret = etat.navigateur_pret;
     afficherBanques(etat.banques);
     afficherOperation(etat.operation);
   } catch (erreur) {
     console.error(erreur);
+  }
+}
+
+async function preparer() {
+  try {
+    await appeler("/api/operations/preparer", { method: "POST" });
+    occupe = true;
+    await rafraichir();
+  } catch (erreur) {
+    alert(erreur.message);
   }
 }
 

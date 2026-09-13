@@ -8,6 +8,8 @@ banques qui le proposent.
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -22,6 +24,44 @@ logger = logging.getLogger(__name__)
 
 class BrowserMissingError(RuntimeError):
     """Chromium n'est pas installé sur le poste."""
+
+
+def browsers_root() -> Path:
+    """Dossier où Playwright dépose les navigateurs téléchargés."""
+    if impose := os.getenv("PLAYWRIGHT_BROWSERS_PATH"):
+        return Path(impose)
+    if sys.platform == "win32":
+        return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ms-playwright"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Caches" / "ms-playwright"
+    return Path.home() / ".cache" / "ms-playwright"
+
+
+def browser_installed(config: BrowserConfig | None = None) -> bool:
+    """Dit si un Chromium utilisable est présent, sans démarrer Playwright.
+
+    Démarrer Playwright pour le savoir coûterait une seconde et lancerait un
+    processus Node : trop cher pour une vérification faite à chaque
+    rafraîchissement de l'interface.
+    """
+    # Un chemin explicitement configuré fait foi : Playwright l'utilisera tel
+    # quel et échouera s'il est faux, même si un autre navigateur traîne ailleurs.
+    if config and config.executable_path:
+        return Path(config.executable_path).exists()
+
+    racine = browsers_root()
+    if not racine.is_dir():
+        return False
+    for dossier in racine.glob("chromium*"):
+        for relatif in (
+            "chrome-win/chrome.exe",
+            "chrome-linux/chrome",
+            "chrome-linux/headless_shell",
+            "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+        ):
+            if (dossier / relatif).exists():
+                return True
+    return False
 
 
 def explain_missing_browser(exc: Exception) -> Exception:

@@ -240,3 +240,50 @@ def test_echec_conserve_le_message(client):
 
     assert operation.etat is Etat.ECHEC
     assert "portail injoignable" in operation.erreur
+
+
+# ---------------------------------------------------------------- préparation du poste
+
+
+def test_etat_signale_le_navigateur(client):
+    """L'interface doit savoir si le navigateur est installé, sans le démarrer."""
+    assert "navigateur_pret" in client.get("/api/etat").json()
+
+
+def test_bandeau_de_preparation_present_dans_la_page(client):
+    assert "Préparer le poste" in client.get("/").text
+
+
+def test_preparation_ne_retelecharge_pas_un_navigateur_present(client, monkeypatch):
+    monkeypatch.setattr("bankextract.app.server.browser_installed", lambda config: True)
+
+    assert client.post("/api/operations/preparer").status_code == 200
+    operation = _attendre_fin(client)
+
+    assert operation["etat"] == Etat.TERMINE.value
+    assert "déjà installé" in operation["resume"]
+
+
+def test_detection_du_navigateur_sans_demarrer_playwright(tmp_path):
+    """Un chemin explicite fait foi : Playwright l'utilisera tel quel."""
+    from bankextract.browser import browser_installed
+    from bankextract.config import BrowserConfig
+
+    faux = tmp_path / "chrome.exe"
+    faux.write_bytes(b"")
+
+    assert browser_installed(BrowserConfig(executable_path=str(faux))) is True
+    assert browser_installed(BrowserConfig(executable_path=str(tmp_path / "absent"))) is False
+
+
+def test_detection_parcourt_le_dossier_des_navigateurs(tmp_path, monkeypatch):
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    from bankextract.browser import browser_installed
+
+    assert browser_installed() is False
+
+    chrome = tmp_path / "chromium-1194" / "chrome-linux" / "chrome"
+    chrome.parent.mkdir(parents=True)
+    chrome.write_bytes(b"")
+
+    assert browser_installed() is True
