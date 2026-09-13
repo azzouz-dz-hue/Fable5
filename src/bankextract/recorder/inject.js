@@ -77,6 +77,13 @@
       if (value) add(`[${attribute}="${escapeQuotes(value)}"]`);
     }
 
+    /* Touches de clavier virtuel : viser l'attribut plutôt que le texte affiché,
+       qui pourrait désigner un « 4 » situé ailleurs dans la page. */
+    for (const attribute of ["data-value", "data-key", "data-digit", "data-char"]) {
+      const value = element.getAttribute(attribute);
+      if (value && value.length === 1) add(`[${attribute}="${escapeQuotes(value)}"]`);
+    }
+
     const name = element.getAttribute("name");
     if (name) add(`${tag}[name="${escapeQuotes(name)}"]`);
 

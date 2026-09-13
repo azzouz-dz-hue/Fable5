@@ -29,6 +29,9 @@ from .scenario import (
     ActionType,
     Scenario,
     Step,
+    key_character,
+    key_template,
+    keypad_runs,
 )
 
 logger = logging.getLogger(__name__)
@@ -208,9 +211,46 @@ def annotate_scenario(scenario: Scenario) -> list[str]:
     l'identifiant, le code OTP et les dates de période.
     """
     notes: list[str] = []
+    notes += _tag_virtual_keyboard(scenario)
     notes += _tag_username(scenario)
     notes += _tag_otp(scenario)
     notes += _tag_period(scenario)
+    return notes
+
+
+def _tag_virtual_keyboard(scenario: Scenario) -> list[str]:
+    """Masque un code saisi sur un clavier virtuel.
+
+    Certains portails font saisir le mot de passe en cliquant des touches à
+    l'écran. Les clics, eux, sont enregistrés : leur ordre reconstituerait le
+    code. On remplace donc la suite par une étape unique portant le jeton, et
+    le gabarit du sélecteur permet au rejeu de recliquer les bonnes touches.
+    """
+    notes: list[str] = []
+    # De la fin vers le début : remplacer une suite décale les indices suivants.
+    for first, last in reversed(keypad_runs(scenario.steps)):
+        gabarit = key_template(scenario.steps[first])
+        if gabarit is None:
+            notes.append(
+                f"étapes {first + 1} à {last + 1} : clavier virtuel détecté mais sélecteur "
+                "non reconnu — vérifiez le fichier à la main avant usage"
+            )
+            continue
+
+        touches = [key_character(step) for step in scenario.steps[first : last + 1]]
+        scenario.steps[first : last + 1] = [
+            Step(
+                action=ActionType.KEYPAD,
+                value=TOKEN_PASSWORD,
+                key_template=gabarit,
+                label=f"saisir ••• sur le clavier virtuel ({len(touches)} touches)",
+                frame_url=scenario.steps[first].frame_url,
+            )
+        ]
+        notes.append(
+            f"étapes {first + 1} à {last + 1} reconnues comme clavier virtuel → "
+            f"{TOKEN_PASSWORD} (les touches cliquées ne sont pas conservées)"
+        )
     return notes
 
 

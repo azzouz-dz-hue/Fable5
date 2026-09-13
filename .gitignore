@@ -27,3 +27,7 @@ exports/
 browser-profiles/
 logs/
 *.log
+
+# Rapports de couverture
+.coverage
+htmlcov/

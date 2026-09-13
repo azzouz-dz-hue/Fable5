@@ -232,6 +232,11 @@ class ScenarioConnector(BankConnector):
             session.goto(step.url)
             return None
 
+        if step.action is ActionType.KEYPAD:
+            self._type_on_keypad(session, step, credentials, otp_requested_at)
+            session.page.wait_for_load_state("domcontentloaded")
+            return None
+
         target = self._resolve(session, step)
         value = self._resolve_value(step, credentials, start, end, date_format, otp_requested_at)
 
@@ -252,6 +257,38 @@ class ScenarioConnector(BankConnector):
 
         session.page.wait_for_load_state("domcontentloaded")
         return None
+
+    def _type_on_keypad(
+        self,
+        session: BrowserSession,
+        step: Step,
+        credentials: Credentials,
+        otp_requested_at: datetime,
+    ) -> None:
+        """Clique les touches d'un clavier virtuel, caractère par caractère."""
+        if not step.key_template:
+            raise StepFailure("clavier virtuel sans gabarit de touche dans le scénario")
+
+        secret = (
+            credentials.password
+            if step.value == TOKEN_PASSWORD
+            else self.otp.wait_for_code(since=otp_requested_at, hint=f"Code {self.display_name}")
+            if step.value == TOKEN_OTP
+            else step.value or ""
+        )
+
+        scope = self._frame(session, step)
+        for character in secret:
+            selector = step.key_template.replace("{c}", character)
+            try:
+                touche = scope.wait_for_selector(selector, timeout=CANDIDATE_TIMEOUT_MS)
+            except Exception as exc:
+                # Le caractère n'est jamais cité dans le message : il ferait fuiter le code.
+                raise StepFailure(
+                    "touche introuvable sur le clavier virtuel — le gabarit "
+                    f"« {step.key_template} » ne correspond plus"
+                ) from exc
+            touche.click()
 
     def _resolve(self, session: BrowserSession, step: Step):
         """Essaie les sélecteurs candidats dans l'ordre et renvoie le premier qui répond."""

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Portail à clavier virtuel</title></head>
+<body>
+<!--
+  Reproduit les portails qui font saisir le code en cliquant des touches à
+  l'écran : le mot de passe n'est jamais frappé au clavier, donc jamais capté
+  par un « fill ». Ce sont les clics qui le révèlent.
+-->
+<input id="user" name="username" placeholder="Identifiant">
+<div id="pad">
+  <button class="key" data-value="0">0</button>
+  <button class="key" data-value="1">1</button>
+  <button class="key" data-value="2">2</button>
+  <button class="key" data-value="3">3</button>
+  <button class="key" data-value="4">4</button>
+  <button class="key" data-value="5">5</button>
+  <button class="key" data-value="6">6</button>
+  <button class="key" data-value="7">7</button>
+  <button class="key" data-value="8">8</button>
+  <button class="key" data-value="9">9</button>
+</div>
+<input id="pass" type="hidden" name="password" value="">
+<button id="ok">Valider</button>
+<script>
+  document.querySelectorAll('.key').forEach(function (touche) {
+    touche.onclick = function () {
+      document.getElementById('pass').value += touche.dataset.value;
+    };
+  });
+</script>
+</body></html>

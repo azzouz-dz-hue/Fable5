@@ -39,6 +39,19 @@ chaque banque (`bankextract record`). Comptez cinq minutes — le temps de vous
 connecter et de télécharger un relevé. Rien à programmer, aucun sélecteur à
 relever.
 
+**Ce qui n'a pas encore été confronté au réel.** Tout ce qui précède est
+vérifié contre un portail e-banking simulé, fidèle mais fabriqué. Le logiciel
+n'a jamais tourné contre une vraie banque — c'est la seule étape que personne
+ne peut faire à votre place, faute d'accès à un compte. Ce premier essai
+demandera vraisemblablement quelques ajustements, et le logiciel est construit
+pour que ces ajustements soient de la configuration, pas du code.
+
+Deux briques restent par ailleurs non éprouvées : la **passerelle SMS**
+(testée contre un serveur factice, jamais contre un vrai téléphone Android) et
+la **lecture d'OTP par IMAP** (peu couverte par les tests). En attendant,
+`provider: manual` fonctionne partout : le robot s'arrête et vous demande le
+code au terminal.
+
 ---
 
 ## Installation
@@ -119,6 +132,13 @@ bankextract scenarios        # liste les parcours enregistrés
 **Le mot de passe et le code SMS ne quittent pas la page.** Un champ de type
 `password` est remplacé par le marqueur `{{password}}` avant même que
 l'information ne parvienne au logiciel ; le champ de code devient `{{otp}}`.
+
+**Les portails à clavier virtuel sont traités aussi.** Quand le code se saisit
+en cliquant des touches à l'écran, ce sont les *clics* qui le révéleraient :
+leur ordre reconstituerait le code. La suite de clics est donc remplacée par
+une étape unique portant `{{password}}`, et seul le gabarit du sélecteur est
+conservé — de quoi recliquer les bonnes touches au rejeu, sans jamais garder
+lesquelles.
 Le fichier `scenarios/bna.json` peut être lu par n'importe qui sans rien
 révéler. Un contrôle automatique signale toute valeur sensible qui aurait
 échappé au masquage, et les tests vérifient qu'aucun mot de passe n'atteint le
@@ -132,6 +152,7 @@ disque.
 | Mot de passe | champ de type `password` | `{{password}}` |
 | Code SMS | champ nommé *otp*, *code*, *sms*… après le mot de passe | `{{otp}}` |
 | Dates de période | valeurs reconnues comme des dates | `{{start}}` / `{{end}}` |
+| Code au clavier virtuel | suite de clics sur des touches isolées | une étape `keypad` masquée |
 | Téléchargement | clic suivi d'un fichier reçu | étape `download` |
 
 Les dates deviennent des jetons : sans cela, le rejeu redemanderait
@@ -398,7 +419,9 @@ le connecteur poursuit sans attendre.
   ignoré par git.
 - **Les parcours enregistrés ne contiennent aucun secret.** Mot de passe et
   code SMS sont remplacés par des marqueurs dans la page elle-même, avant tout
-  enregistrement. Un contrôle automatique le vérifie, et un test le garantit.
+  enregistrement ; les codes saisis sur un clavier virtuel le sont aussi. Un
+  contrôle automatique signale toute fuite résiduelle, et des tests vérifient
+  qu'aucun code n'atteint le disque dans l'un ou l'autre cas.
 - **Rien ne sort du poste.** Base, exports et relevés restent en local ; aucun
   service tiers n'est appelé.
 - **Les traces ne révèlent rien.** Les identifiants ne sont jamais affichés en
@@ -485,8 +508,8 @@ class MaBanqueConnector(GenericPortalConnector):
 ## Tests
 
 ```bash
-pytest                      # 176 tests
-pytest -m "not e2e" -q      # 155 tests, sans le navigateur (~9 s)
+pytest                      # 195 tests
+pytest -m "not e2e" -q      # 171 tests, sans le navigateur (~9 s)
 ```
 
 Les tests de bout en bout tournent contre le faux portail de
@@ -500,9 +523,11 @@ utilisateur déclencherait. Sont ainsi couverts le cycle complet
 passe dans le fichier enregistré, le message d'erreur quand un sélecteur est
 devenu obsolète, et le calcul des échéances (dont le 31 d'un mois de 30 jours).
 
-L'envoi de courriel est testé contre un serveur SMTP local : pièces jointes,
-dépassement de taille, échec de connexion. Aucune banque réelle n'est
-sollicitée, aucun message ne part sur Internet.
+Les relevés PDF sont analysés à partir de fichiers réellement fabriqués pour
+le test, dans les deux présentations rencontrées : tableau structuré et texte
+aligné en colonnes. L'envoi de courriel est testé contre un serveur SMTP
+local : pièces jointes, dépassement de taille, échec de connexion. Aucune
+banque réelle n'est sollicitée, aucun message ne part sur Internet.
 
 ---
 

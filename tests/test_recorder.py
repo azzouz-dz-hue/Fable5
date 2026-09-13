@@ -1,7 +1,8 @@
 """Enregistrement d'un parcours bancaire, puis rejeu automatique."""
 
 import json
-from datetime import date
+from datetime import date, datetime, timezone
+from pathlib import Path
 
 import pytest
 from conftest import CHROMIUM
@@ -369,3 +370,122 @@ def test_scenario_manquant_signale_sans_ouvrir_le_navigateur(settings, tmp_path,
 
     assert not resultat.ok
     assert any("Scénario" in erreur for erreur in resultat.errors)
+
+
+# ---------------------------------------------------------------- clavier virtuel
+
+CODE_CLAVIER = "4719"
+PAGE_CLAVIER = Path(__file__).parent / "fixtures" / "clavier_virtuel.html"
+
+
+def _clic_sur_touches(page):
+    """Saisie d'un code sur un clavier virtuel, comme sur certains portails."""
+    page.fill("#user", "medico")
+    for caractere in CODE_CLAVIER:
+        page.click(f'.key[data-value="{caractere}"]')
+    page.click("#ok")
+    page.wait_for_timeout(200)
+
+
+@navigateur
+def test_clavier_virtuel_ne_laisse_pas_le_code_sur_le_disque(settings, tmp_path):
+    """Sans masquage, l'ordre des clics reconstituerait le code saisi.
+
+    C'est la seconde voie de fuite, distincte du champ « password » : ici le
+    mot de passe n'est jamais frappé au clavier, il est cliqué.
+    """
+    scenario = record_scenario(
+        "clavier",
+        PAGE_CLAVIER.as_uri(),
+        settings.browser,
+        headless=True,
+        driver=_clic_sur_touches,
+    )
+    contenu = scenario.save(tmp_path / "clavier.json").read_text(encoding="utf-8")
+
+    assert CODE_CLAVIER not in contenu
+    for chiffre in CODE_CLAVIER:
+        assert f'"{chiffre}"' not in contenu, f"la touche {chiffre} reste lisible"
+    assert scenario.contains_secret_values() == []
+
+
+@navigateur
+def test_clavier_virtuel_condense_en_une_etape_masquee(settings):
+    scenario = record_scenario(
+        "clavier",
+        PAGE_CLAVIER.as_uri(),
+        settings.browser,
+        headless=True,
+        driver=_clic_sur_touches,
+    )
+
+    frappes = [step for step in scenario.steps if step.action is ActionType.KEYPAD]
+
+    assert len(frappes) == 1
+    assert frappes[0].value == TOKEN_PASSWORD
+    assert frappes[0].key_template == '[data-value="{c}"]'
+    assert "•••" in frappes[0].describe()
+
+
+@navigateur
+def test_rejeu_reclique_les_bonnes_touches(settings, tmp_path):
+    """Le masquage ne servirait à rien si le rejeu ne savait plus saisir le code."""
+    from bankextract.browser import ephemeral_browser
+    from bankextract.secrets import Credentials
+
+    scenario = record_scenario(
+        "clavier",
+        PAGE_CLAVIER.as_uri(),
+        settings.browser,
+        headless=True,
+        driver=_clic_sur_touches,
+    )
+    chemin = scenario.save(tmp_path / "clavier.json")
+    etape = next(s for s in scenario.steps if s.action is ActionType.KEYPAD)
+
+    connecteur = ScenarioConnector(
+        config=BankConfig(connector="scenario", options={"scenario_path": str(chemin)}),
+        settings=settings,
+    )
+    with ephemeral_browser(settings.browser) as session:
+        session.goto(PAGE_CLAVIER.as_uri())
+        connecteur._type_on_keypad(
+            session, etape, Credentials("medico", CODE_CLAVIER), datetime.now(timezone.utc)
+        )
+        saisi = session.page.input_value("#pass")
+
+    assert saisi == CODE_CLAVIER
+
+
+def test_suite_de_clics_detectee_par_le_filet_de_securite():
+    """Si la conversion échoue, l'utilisateur doit au moins être averti."""
+    scenario = Scenario(
+        bank="x",
+        steps=[
+            Step(action=ActionType.CLICK, selectors=['text="4"'], label="button « 4 »"),
+            Step(action=ActionType.CLICK, selectors=['text="7"'], label="button « 7 »"),
+            Step(action=ActionType.CLICK, selectors=['text="1"'], label="button « 1 »"),
+        ],
+    )
+
+    suspects = scenario.contains_secret_values()
+
+    assert suspects and "clavier virtuel" in suspects[0]
+
+
+def test_pagination_numerotee_n_est_pas_prise_pour_un_clavier():
+    """Faux positif à éviter : des liens de pages « 1 2 3 » après un vrai mot de passe."""
+    scenario = Scenario(
+        bank="x",
+        steps=[
+            Step(action=ActionType.FILL, selectors=["#pass"], value=TOKEN_PASSWORD),
+            Step(action=ActionType.CLICK, selectors=['text="1"'], label="a « 1 »"),
+            Step(action=ActionType.CLICK, selectors=['text="2"'], label="a « 2 »"),
+            Step(action=ActionType.CLICK, selectors=['text="3"'], label="a « 3 »"),
+        ],
+    )
+
+    annotate_scenario(scenario)
+
+    assert scenario.contains_secret_values() == []
+    assert not [s for s in scenario.steps if s.action is ActionType.KEYPAD]

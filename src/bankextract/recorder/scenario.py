@@ -17,6 +17,7 @@ Deux principes gouvernent ce format :
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -44,6 +45,7 @@ class ActionType(str, Enum):
     CHECK = "check"         # case à cocher
     WAIT = "wait"           # attente explicite ajoutée par l'utilisateur
     DOWNLOAD = "download"   # clic dont on attend un téléchargement
+    KEYPAD = "keypad"       # saisie touche par touche sur un clavier virtuel
 
 
 class Step(BaseModel):
@@ -71,6 +73,11 @@ class Step(BaseModel):
     wait_ms: int = Field(default=0, description="Pause après l'étape.")
     recorded_at: datetime | None = None
 
+    key_template: str | None = Field(
+        default=None,
+        description="Sélecteur d'une touche de clavier virtuel, « {c} » valant le caractère.",
+    )
+
     @property
     def is_secret(self) -> bool:
         return self.value in (TOKEN_PASSWORD, TOKEN_OTP)
@@ -85,6 +92,8 @@ class Step(BaseModel):
         if self.action is ActionType.FILL:
             shown = "•••" if self.is_secret else f"« {self.value} »"
             return f"saisir {shown} dans {target}"
+        if self.action is ActionType.KEYPAD:
+            return f"saisir ••• au clavier virtuel ({self.key_template})"
         if self.action is ActionType.DOWNLOAD:
             return f"télécharger via {target}"
         return f"{self.action.value} {target}"
@@ -126,6 +135,10 @@ class Scenario(BaseModel):
     def contains_secret_values(self) -> list[str]:
         """Repère un secret qui aurait échappé au masquage — filet de sécurité.
 
+        Deux fuites possibles : une valeur restée dans un champ de mot de passe,
+        et une suite de clics sur un clavier virtuel, dont l'ordre des touches
+        reconstitue le code saisi.
+
         Renvoie la description des étapes suspectes ; la liste doit rester vide.
         """
         suspects: list[str] = []
@@ -137,6 +150,13 @@ class Scenario(BaseModel):
             selector_text = " ".join(step.selectors).lower()
             if any(word in selector_text for word in ("password", "passwd", "mot-de-passe", "mdp")):
                 suspects.append(f"étape {index} : {step.selectors[0] if step.selectors else '?'}")
+
+        for first, last in keypad_runs(self.steps):
+            touches = "".join(key_character(self.steps[i]) or "?" for i in range(first, last + 1))
+            suspects.append(
+                f"étapes {first + 1} à {last + 1} : suite de clics sur des touches "
+                f"(« {touches} ») — clavier virtuel non masqué"
+            )
         return suspects
 
     # ------------------------------------------------------------------ E/S
@@ -171,3 +191,61 @@ class Scenario(BaseModel):
 def scenario_path(directory: Path, bank: str) -> Path:
     """Emplacement canonique du scénario d'une banque."""
     return Path(directory) / f"{bank}.json"
+
+
+#: En deçà, une suite de clics sur des caractères isolés relève plus vraisemblablement
+#: d'une pagination que d'un clavier virtuel.
+MIN_KEYPAD_RUN = 3
+
+_KEY_PATTERNS = (
+    re.compile(r'^text="(.)"$'),
+    re.compile(r'^\[data-(?:value|key|digit|char)="(.)"\]$'),
+)
+
+
+def key_character(step: Step) -> str | None:
+    """Caractère porté par une touche de clavier virtuel, si le clic en est une."""
+    if step.action is not ActionType.CLICK:
+        return None
+    for selector in step.selectors:
+        for pattern in _KEY_PATTERNS:
+            match = pattern.match(selector)
+            if match:
+                return match.group(1)
+    match = re.match(r"^\w+ « (.) »$", step.label or "")
+    return match.group(1) if match else None
+
+
+def keypad_runs(steps: list[Step]) -> list[tuple[int, int]]:
+    """Suites de clics sur des touches isolées, susceptibles de porter un code.
+
+    N'est concluant que si le parcours ne comporte aucun champ de mot de passe
+    classique : sinon une pagination numérotée serait prise pour un clavier.
+    """
+    if any(step.value == TOKEN_PASSWORD for step in steps):
+        return []
+
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for index, step in enumerate(steps):
+        if key_character(step) is not None:
+            start = index if start is None else start
+            continue
+        if start is not None and index - start >= MIN_KEYPAD_RUN:
+            runs.append((start, index - 1))
+        start = None
+    if start is not None and len(steps) - start >= MIN_KEYPAD_RUN:
+        runs.append((start, len(steps) - 1))
+    return runs
+
+
+def key_template(step: Step) -> str | None:
+    """Transforme le sélecteur d'une touche en gabarit, « {c} » valant le caractère."""
+    character = key_character(step)
+    if character is None:
+        return None
+    for selector in step.selectors:
+        for pattern in _KEY_PATTERNS:
+            if pattern.match(selector):
+                return selector.replace(f'"{character}"', '"{c}"')
+    return None
