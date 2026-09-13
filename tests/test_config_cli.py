@@ -191,3 +191,42 @@ def test_configurer_la_sortie_est_sans_effet_de_bord():
 
     _configurer_sortie()
     _configurer_sortie()  # deux fois de suite ne doit rien casser
+
+
+def test_diagnostic_disponible():
+    resultat = runner.invoke(app, ["--help"])
+
+    assert "diagnostic" in resultat.stdout
+
+
+def test_diagnostic_signale_un_navigateur_absent(tmp_path, monkeypatch):
+    """Sans navigateur, le diagnostic doit échouer clairement, pas planter."""
+    import yaml
+
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "vide"))
+    # Un Chromium imposé par l'environnement de développement fausserait le test.
+    monkeypatch.delenv("BANKEXTRACT_CHROMIUM", raising=False)
+    config = tmp_path / "banks.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "banks": {},
+                "paths": {
+                    "data_dir": str(tmp_path / "data"),
+                    "downloads_dir": str(tmp_path / "data" / "dl"),
+                    "exports_dir": str(tmp_path / "data" / "ex"),
+                    "logs_dir": str(tmp_path / "logs"),
+                    "database_url": f"sqlite:///{tmp_path}/t.db",
+                },
+            }
+        )
+    )
+
+    from bankextract.browser import reset_browser_cache
+
+    reset_browser_cache()
+    resultat = runner.invoke(app, ["diagnostic", "--config", str(config)])
+    reset_browser_cache()
+
+    assert resultat.exit_code == 1
+    assert "navigateur absent" in resultat.stdout

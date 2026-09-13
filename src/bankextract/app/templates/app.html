@@ -128,7 +128,10 @@
         <h1>BankExtract</h1>
         <p class="sous-titre">Extraction automatique de vos relevés de comptes bancaires</p>
       </div>
-      <a class="bouton" href="/releves" target="_blank" rel="noopener">Voir les relevés</a>
+      <div class="actions">
+        <button id="bouton-diagnostic" onclick="verifier()">Vérifier l'installation</button>
+        <a class="bouton" href="/releves" target="_blank" rel="noopener">Voir les relevés</a>
+      </div>
     </div>
   </header>
 
@@ -336,11 +339,22 @@ async function rafraichir() {
     $("dossier-exports").textContent = etat.dossiers.exports;
     $("bloc-preparation").hidden = etat.navigateur_pret;
     $("bouton-preparer").disabled = occupe;
+    $("bouton-diagnostic").disabled = occupe;
     navigateurPret = etat.navigateur_pret;
     afficherBanques(etat.banques);
     afficherOperation(etat.operation);
   } catch (erreur) {
     console.error(erreur);
+  }
+}
+
+async function verifier() {
+  try {
+    await appeler("/api/operations/diagnostic", { method: "POST" });
+    occupe = true;
+    await rafraichir();
+  } catch (erreur) {
+    alert(erreur.message);
   }
 }
 

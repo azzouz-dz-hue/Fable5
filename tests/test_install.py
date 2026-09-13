@@ -174,3 +174,58 @@ def test_resultat_memorise(racine_navigateurs):
         fichier.unlink()
 
     assert browser_installed() is True, "le résultat positif doit rester mémorisé"
+
+
+# ---------------------------------------------------------------- emplacement durable
+
+
+def test_l_emplacement_impose_survit_a_playwright(monkeypatch, tmp_path):
+    """Playwright force « 0 » dans un exécutable compilé : nos réglages doivent primer.
+
+    « 0 » signifie « range les navigateurs dans mon propre paquet » — or ce
+    paquet est extrait dans un dossier temporaire recréé à chaque lancement.
+    """
+    from playwright._impl._driver import get_driver_env
+
+    from bankextract.browser import ensure_browsers_path
+
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    racine = ensure_browsers_path()
+
+    environnement = get_driver_env()
+    environnement.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")  # ce que fait Playwright
+
+    assert environnement["PLAYWRIGHT_BROWSERS_PATH"] == str(racine)
+    assert environnement["PLAYWRIGHT_BROWSERS_PATH"] != "0"
+
+
+def test_la_valeur_zero_est_ignoree(monkeypatch):
+    from bankextract.browser import browsers_root
+
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "0")
+
+    assert str(browsers_root()) != "0"
+    assert browsers_root().is_absolute()
+
+
+def test_installation_et_lancement_visent_le_meme_dossier(monkeypatch, tmp_path):
+    """Le défaut qui a bloqué le premier essai : télécharger ici, chercher là."""
+    from bankextract.browser import browsers_root, ensure_browsers_path
+
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path))
+    ensure_browsers_path()
+
+    assert environnement_pilote()["PLAYWRIGHT_BROWSERS_PATH"] == str(browsers_root())
+
+
+def test_emplacement_par_defaut_est_durable(monkeypatch):
+    """Jamais un dossier temporaire : le téléchargement doit survivre à la fermeture."""
+    import tempfile
+
+    from bankextract.browser import browsers_root
+
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    racine = browsers_root()
+
+    assert "ms-playwright" in str(racine)
+    assert not str(racine).startswith(tempfile.gettempdir())

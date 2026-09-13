@@ -27,14 +27,36 @@ class BrowserMissingError(RuntimeError):
 
 
 def browsers_root() -> Path:
-    """Dossier où Playwright dépose les navigateurs téléchargés."""
-    if impose := os.getenv("PLAYWRIGHT_BROWSERS_PATH"):
+    """Dossier durable où sont rangés les navigateurs téléchargés.
+
+    La valeur « 0 » est ignorée : elle demande à Playwright de les ranger dans
+    son propre paquet, ce qui ne convient pas ici (voir `ensure_browsers_path`).
+    """
+    impose = os.getenv("PLAYWRIGHT_BROWSERS_PATH")
+    if impose and impose != "0":
         return Path(impose)
     if sys.platform == "win32":
         return Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ms-playwright"
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Caches" / "ms-playwright"
     return Path.home() / ".cache" / "ms-playwright"
+
+
+def ensure_browsers_path() -> Path:
+    """Impose un emplacement durable pour les navigateurs, et le renvoie.
+
+    Sans cela, Playwright détecte l'exécutable compilé et force
+    « PLAYWRIGHT_BROWSERS_PATH=0 », c'est-à-dire un rangement à l'intérieur de
+    son propre paquet. Or ce paquet est extrait dans un dossier temporaire
+    recréé à chaque lancement : le navigateur téléchargé serait perdu à la
+    fermeture, et introuvable au lancement suivant.
+
+    Fixer nous-mêmes la variable fait converger les trois opérations qui en
+    dépendent : le téléchargement, la détection et le démarrage du navigateur.
+    """
+    racine = browsers_root()
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(racine)
+    return racine
 
 
 #: Noms de l'exécutable selon la plateforme. Le dossier qui le contient, lui,
@@ -142,6 +164,7 @@ class BrowserSession:
 @contextmanager
 def browser_session(config: BrowserConfig, bank: str) -> Iterator[BrowserSession]:
     """Ouvre un navigateur pour une banque et garantit sa fermeture."""
+    ensure_browsers_path()
     profile_dir = config.profiles_dir / bank
     profile_dir.mkdir(parents=True, exist_ok=True)
 
@@ -176,6 +199,7 @@ def browser_session(config: BrowserConfig, bank: str) -> Iterator[BrowserSession
 @contextmanager
 def ephemeral_browser(config: BrowserConfig, bank: str = "test") -> Iterator[BrowserSession]:
     """Navigateur sans profil persistant — utilisé par les tests."""
+    ensure_browsers_path()
     launch_args: dict = {"headless": config.headless, "slow_mo": config.slow_mo_ms}
     if config.executable_path:
         launch_args["executable_path"] = config.executable_path

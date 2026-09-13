@@ -34,9 +34,19 @@ def commande_installation(navigateur: str = "chromium") -> list[str]:
 
 
 def environnement_pilote() -> dict:
+    """Environnement du pilote, avec l'emplacement durable des navigateurs.
+
+    C'est le même que celui utilisé au lancement : sans quoi le téléchargement
+    atterrirait à un endroit où personne ne viendrait le chercher.
+    """
     from playwright._impl._driver import get_driver_env
 
-    return get_driver_env()
+    from .browser import ensure_browsers_path
+
+    racine = ensure_browsers_path()
+    environnement = get_driver_env()
+    environnement["PLAYWRIGHT_BROWSERS_PATH"] = str(racine)
+    return environnement
 
 
 def installer_navigateur(

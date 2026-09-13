@@ -195,6 +195,31 @@ def creer_application(
 
         return _lancer(executeur, "Préparation du poste", travail)
 
+    @application.post("/api/operations/diagnostic")
+    def demarrer_diagnostic() -> dict:
+        """Ouvre réellement un navigateur : le seul moyen de savoir qu'il marche."""
+        courant = lire_settings()
+
+        def travail(operation: Operation) -> str:
+            from ..browser import browsers_root, ephemeral_browser
+
+            operation.lignes.append(f"Navigateurs rangés dans {browsers_root()}")
+            if not browser_installed(courant.browser):
+                raise RuntimeError(
+                    "Navigateur absent. Cliquez sur « Préparer le poste »."
+                )
+            operation.lignes.append("Navigateur présent — essai d'ouverture…")
+
+            courant.browser.headless = True
+            with ephemeral_browser(courant.browser, "diagnostic") as session:
+                session.page.set_content("<h1>diagnostic</h1>")
+                lu = session.page.inner_text("h1")
+            if lu != "diagnostic":
+                raise RuntimeError("le navigateur s'ouvre mais n'affiche pas la page")
+            return "Le navigateur démarre correctement. Tout est en place."
+
+        return _lancer(executeur, "Vérification de l'installation", travail)
+
     @application.post("/api/operations/enregistrer/{cle}")
     def demarrer_enregistrement(cle: str) -> dict:
         courant = lire_settings()

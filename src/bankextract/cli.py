@@ -58,7 +58,10 @@ def _configurer_sortie() -> None:
 @app.callback()
 def _avant_chaque_commande() -> None:
     """Exécuté avant toute commande."""
+    from .browser import ensure_browsers_path
+
     _configurer_sortie()
+    ensure_browsers_path()
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -369,6 +372,69 @@ def interface(
     except KeyboardInterrupt:
         console.print("\n[dim]Interface arrêtée.[/dim]")
 
+
+
+@app.command()
+def diagnostic(
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Vérifie que l'installation est complète et que le navigateur démarre.
+
+    Contrairement à « setup », qui installe, cette commande éprouve : elle ouvre
+    réellement un navigateur et charge une page. C'est le seul moyen de savoir
+    que l'extraction pourra fonctionner.
+    """
+    from .browser import browser_installed, browsers_root, ephemeral_browser
+
+    _setup_logging(verbose)
+    settings = load_settings(config)
+    echecs: list[str] = []
+
+    console.print("[bold]Diagnostic[/bold]\n")
+
+    settings.paths.ensure()
+    console.print(f"  [green]OK[/green]  dossiers de travail — {settings.paths.data_dir.resolve()}")
+    console.print(f"  [green]OK[/green]  navigateurs rangés dans {browsers_root()}")
+
+    if browser_installed(settings.browser):
+        console.print("  [green]OK[/green]  navigateur présent")
+    else:
+        console.print("  [red]KO[/red]  navigateur absent — lancez « bankextract setup »")
+        echecs.append("navigateur absent")
+
+    if not echecs:
+        try:
+            settings.browser.headless = True
+            with ephemeral_browser(settings.browser, "diagnostic") as session:
+                session.page.set_content("<h1>diagnostic</h1>")
+                titre = session.page.inner_text("h1")
+            if titre != "diagnostic":
+                raise RuntimeError("la page n'a pas été lue correctement")
+            console.print("  [green]OK[/green]  le navigateur démarre et affiche une page")
+        except Exception as exc:
+            console.print(f"  [red]KO[/red]  le navigateur ne démarre pas : {exc}")
+            echecs.append("démarrage du navigateur")
+
+    try:
+        Database(settings.paths.database_url).totals()
+        console.print("  [green]OK[/green]  base de données accessible")
+    except Exception as exc:
+        console.print(f"  [red]KO[/red]  base de données : {exc}")
+        echecs.append("base de données")
+
+    banques = list(settings.enabled_banks())
+    if banques:
+        console.print(
+            f"  [green]OK[/green]  {len(banques)} banque(s) configurée(s) : {', '.join(banques)}"
+        )
+    else:
+        console.print("  [yellow]--[/yellow]  aucune banque configurée pour l'instant")
+
+    if echecs:
+        console.print(f"\n[red]Diagnostic en échec :[/red] {', '.join(echecs)}")
+        raise typer.Exit(code=1)
+    console.print("\n[green]Tout est en place.[/green]")
 
 
 @app.command()

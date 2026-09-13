@@ -128,6 +128,20 @@ jobs:
           if ($sortie -notmatch "navigateur") { throw "sortie inattendue de setup" }
           Write-Host "Le navigateur s'installe correctement depuis l'executable"
 
+      # Installer ne suffit pas : dans un executable compile, Playwright range
+      # les navigateurs dans son dossier temporaire, efface a chaque lancement.
+      # Seul un demarrage reel prouve que l'extraction pourra fonctionner.
+      - name: Vérifier que le navigateur démarre depuis l'exécutable
+        shell: pwsh
+        run: |
+          $sortie = & "dist\bankextract.exe" diagnostic 2>&1 | Out-String
+          Write-Host $sortie
+          if ($LASTEXITCODE -ne 0) { throw "diagnostic en echec" }
+          if ($sortie -notmatch "le navigateur d.marre") {
+            throw "le navigateur n'a pas demarre"
+          }
+          Write-Host "Le navigateur demarre depuis l'executable"
+
       # C'est le chemin du double-clic : l'interface doit reellement s'ouvrir.
       - name: Vérifier que l'interface démarre
         shell: pwsh

@@ -357,3 +357,17 @@ def test_banque_ajoutee_puis_retiree_disparait(config_avec_modele):
     assert "natixis" in [b["cle"] for b in client.get("/api/etat").json()["banques"]]
     assert "retirée" in client.delete("/api/banques/natixis").json()["message"]
     assert "natixis" not in [b["cle"] for b in client.get("/api/etat").json()["banques"]]
+
+
+def test_bouton_de_verification_present(client):
+    assert "Vérifier l'installation" in client.get("/").text
+
+
+def test_diagnostic_sans_navigateur(client, monkeypatch):
+    monkeypatch.setattr("bankextract.app.server.browser_installed", lambda config: False)
+
+    assert client.post("/api/operations/diagnostic").status_code == 200
+    operation = _attendre_fin(client)
+
+    assert operation["etat"] == Etat.ECHEC.value
+    assert "Préparer le poste" in operation["erreur"]
