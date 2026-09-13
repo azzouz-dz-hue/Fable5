@@ -1,0 +1,121 @@
+"""Pilotage du navigateur (Playwright) pour les portails e-banking.
+
+Le contexte est *persistant* : les cookies « appareil de confiance » survivent
+d'une exécution à l'autre, ce qui évite un OTP à chaque lancement sur les
+banques qui le proposent.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+
+from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
+
+from .config import BrowserConfig
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+
+class BrowserSession:
+    """Enveloppe un contexte Playwright et les dossiers associés."""
+
+    def __init__(self, context: BrowserContext, page: Page, config: BrowserConfig, bank: str):
+        self.context = context
+        self.page = page
+        self.config = config
+        self.bank = bank
+
+    def goto(self, url: str, **kwargs) -> None:
+        self.page.goto(url, wait_until=kwargs.pop("wait_until", "domcontentloaded"), **kwargs)
+
+    def screenshot(self, name: str, directory: Path | None = None) -> Path | None:
+        """Capture l'écran — indispensable pour diagnostiquer un sélecteur cassé."""
+        target_dir = directory or Path("logs/screenshots")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = target_dir / f"{self.bank}-{name}-{stamp}.png"
+        try:
+            self.page.screenshot(path=str(path), full_page=True)
+            return path
+        except Exception as exc:  # pragma: no cover - page déjà fermée
+            logger.warning("Capture d'écran impossible : %s", exc)
+            return None
+
+    def download_to(self, trigger, destination_dir: Path, filename: str | None = None) -> Path:
+        """Exécute `trigger()` et enregistre le téléchargement déclenché.
+
+        `trigger` est un appelable qui provoque le téléchargement (un clic, en
+        général) ; Playwright attend l'événement à notre place.
+        """
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        with self.page.expect_download(timeout=self.config.timeout_ms) as info:
+            trigger()
+        download = info.value
+        target = destination_dir / (filename or download.suggested_filename or "releve.pdf")
+        download.save_as(str(target))
+        logger.info("Téléchargé : %s", target)
+        return target
+
+
+@contextmanager
+def browser_session(config: BrowserConfig, bank: str) -> Iterator[BrowserSession]:
+    """Ouvre un navigateur pour une banque et garantit sa fermeture."""
+    profile_dir = config.profiles_dir / bank
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
+    launch_args: dict = {
+        "headless": config.headless,
+        "slow_mo": config.slow_mo_ms,
+        "locale": config.locale,
+        "timezone_id": config.timezone,
+        "user_agent": config.user_agent or DEFAULT_USER_AGENT,
+        "accept_downloads": True,
+        "args": ["--disable-blink-features=AutomationControlled"],
+    }
+    if config.executable_path:
+        launch_args["executable_path"] = config.executable_path
+
+    with sync_playwright() as playwright:
+        context = playwright.chromium.launch_persistent_context(
+            user_data_dir=str(profile_dir), **launch_args
+        )
+        context.set_default_timeout(config.timeout_ms)
+        page = context.pages[0] if context.pages else context.new_page()
+        session = BrowserSession(context=context, page=page, config=config, bank=bank)
+        try:
+            yield session
+        finally:
+            context.close()
+
+
+@contextmanager
+def ephemeral_browser(config: BrowserConfig, bank: str = "test") -> Iterator[BrowserSession]:
+    """Navigateur sans profil persistant — utilisé par les tests."""
+    launch_args: dict = {"headless": config.headless, "slow_mo": config.slow_mo_ms}
+    if config.executable_path:
+        launch_args["executable_path"] = config.executable_path
+
+    with sync_playwright() as playwright:
+        browser: Browser = playwright.chromium.launch(**launch_args)
+        context = browser.new_context(
+            locale=config.locale,
+            timezone_id=config.timezone,
+            user_agent=config.user_agent or DEFAULT_USER_AGENT,
+            accept_downloads=True,
+        )
+        context.set_default_timeout(config.timeout_ms)
+        page = context.new_page()
+        try:
+            yield BrowserSession(context=context, page=page, config=config, bank=bank)
+        finally:
+            context.close()
+            browser.close()

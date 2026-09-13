@@ -1,0 +1,193 @@
+# ---------------------------------------------------------------------------
+# Configuration de BankExtract
+#
+# Ce fichier ne contient AUCUN identifiant : seulement les noms des variables
+# d'environnement ou du trousseau système où ils sont lus. Il peut être versionné.
+#
+# Pour décrire une banque non encore renseignée :
+#   1. bankextract inspect <banque>     → ouvre le portail en navigateur visible
+#   2. relevez les sélecteurs CSS (clic droit → Inspecter → Copier le sélecteur)
+#   3. reportez-les ci-dessous, puis testez : bankextract extract <banque> --headed
+# ---------------------------------------------------------------------------
+
+browser:
+  headless: true            # false pour voir ce que fait le robot
+  slow_mo_ms: 0             # ralentir chaque action (utile en mise au point)
+  timeout_ms: 45000
+  locale: fr-FR
+  timezone: Africa/Algiers
+  profiles_dir: browser-profiles   # conserve les cookies « appareil de confiance »
+  screenshot_on_error: true
+  # executable_path: /usr/bin/chromium   # Chromium déjà installé sur le poste
+
+paths:
+  data_dir: data
+  downloads_dir: data/downloads
+  exports_dir: data/exports
+  logs_dir: logs
+  database_url: sqlite:///data/bankextract.db
+  # database_url: postgresql+psycopg://user:mdp@localhost/bankextract
+
+banks:
+
+  # -------------------------------------------------------------------------
+  # BNA — modèle à compléter avec les sélecteurs réels du portail.
+  # Les valeurs ci-dessous sont des EXEMPLES : elles doivent être vérifiées.
+  # -------------------------------------------------------------------------
+  bna:
+    connector: bna
+    enabled: false
+    label: BNA — SARL Medico Medline
+    history_days: 90
+    download_statements: true
+
+    # Identifiants : trousseau système en priorité (bankextract login bna),
+    # sinon ces variables d'environnement.
+    username_env: BNA_USERNAME
+    password_env: BNA_PASSWORD
+
+    otp:
+      provider: sms_gateway   # manual | sms_gateway | imap | totp | file
+      timeout_seconds: 180
+      poll_interval_seconds: 3
+      options:
+        url: http://192.168.1.50:8080/messages   # passerelle SMS Android
+        token_env: SMS_GATEWAY_TOKEN
+        sender: BNA                # ne retenir que les SMS de cet expéditeur
+        text_field: body           # champ contenant le texte du SMS
+        date_field: date           # champ d'horodatage (epoch ou ISO 8601)
+        sender_field: address
+        code_pattern: '\b(\d{6})\b'
+        lookback_seconds: 30
+
+    options:
+      base_url: https://ebanking.bna.dz
+
+      login:
+        url: /login
+        username_selector: "#username"
+        password_selector: "#password"
+        submit_selector: "button[type=submit]"
+        success_selector: ".dashboard"      # présent UNIQUEMENT une fois connecté
+        error_selector: ".alert-danger"     # message d'erreur de la banque
+        cookie_accept_selector: "#accept-cookies"
+        otp:
+          input_selector: "#otp"
+          submit_selector: "#otp-submit"
+          # trigger_selector: "#send-sms"   # si un clic déclenche l'envoi du SMS
+          wait_ms: 8000                     # au-delà : on considère qu'il n'y a pas d'OTP
+          prompt: Code SMS BNA
+
+      accounts:
+        url: /accounts
+        row_selector: "table.accounts tbody tr"
+        default_currency: DZD
+        columns:
+          number: "td:nth-child(1)"
+          label: "td:nth-child(2)"
+          type: "td:nth-child(3)"
+          currency: "td:nth-child(4)"
+          balance: "td:nth-child(5)"
+
+      transactions:
+        # Jetons disponibles : {number} {raw_number} {iban} {start} {end} {start_iso} {end_iso}
+        url_template: "/accounts/{number}/operations?du={start}&au={end}"
+        date_format: "%d/%m/%Y"
+        row_selector: "table.operations tbody tr"
+        next_page_selector: "a.pagination-next"
+        max_pages: 25
+        columns:
+          date: "td:nth-child(1)"
+          value_date: "td:nth-child(2)"
+          label: "td:nth-child(3)"
+          debit: "td:nth-child(4)"
+          credit: "td:nth-child(5)"
+          balance: "td:nth-child(6)"
+          reference: "td:nth-child(7)"
+        # Variante : formulaire de période au lieu d'une URL paramétrée
+        # date_filter:
+        #   start_selector: "#date-debut"
+        #   end_selector: "#date-fin"
+        #   submit_selector: "#rechercher"
+        #   format: "%d/%m/%Y"
+
+      statements:
+        url_template: "/accounts/{number}/releves"
+        row_selector: "table.statements tbody tr"
+        link_selector: "a.download"
+        max_files: 24
+        columns:
+          period: "td:nth-child(1)"
+
+      logout:
+        selector: "#logout"
+
+  # -------------------------------------------------------------------------
+  # Gabarits des autres banques algériennes : même structure que BNA.
+  # Activez-les après avoir renseigné leurs sélecteurs.
+  # -------------------------------------------------------------------------
+  cpa:
+    connector: cpa
+    enabled: false
+    label: CPA
+    username_env: CPA_USERNAME
+    password_env: CPA_PASSWORD
+    otp:
+      provider: manual
+    options:
+      base_url: https://ebanking.cpa-bank.dz
+
+  bea:
+    connector: bea
+    enabled: false
+    label: BEA
+    username_env: BEA_USERNAME
+    password_env: BEA_PASSWORD
+    otp:
+      provider: manual
+    options:
+      base_url: https://ebanking.bea.dz
+
+  sga:
+    connector: sga
+    enabled: false
+    label: Société Générale Algérie
+    username_env: SGA_USERNAME
+    password_env: SGA_PASSWORD
+    otp:
+      provider: manual
+    options:
+      base_url: https://www.sgalgerie.dz
+
+  agb:
+    connector: agb
+    enabled: false
+    label: AGB
+    username_env: AGB_USERNAME
+    password_env: AGB_PASSWORD
+    otp:
+      provider: manual
+    options:
+      base_url: https://ebanking.agb.dz
+
+  # -------------------------------------------------------------------------
+  # Banque de démonstration : tourne contre le faux portail des tests.
+  # Sert à valider l'installation sans toucher à une vraie banque.
+  #   .venv/bin/python tests/fixtures/fake_bank/server.py
+  #   bankextract extract demo --since 2026-02-01
+  # -------------------------------------------------------------------------
+  demo:
+    connector: demo
+    enabled: false
+    label: Banque Demo (test)
+    history_days: 400
+    username_env: BANKEXTRACT_DEMO_USERNAME
+    password_env: BANKEXTRACT_DEMO_PASSWORD
+    otp:
+      provider: file
+      timeout_seconds: 30
+      poll_interval_seconds: 1
+      options:
+        path: data/otp.txt
+    options:
+      base_url: http://127.0.0.1:8777

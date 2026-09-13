@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="fr" class="viz-root">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BankExtract — Relevés bancaires</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --surface-0: #f4f3f0;
+    --surface-1: #fcfcfb;
+    --border:    #e2e0da;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #7a7873;
+    --series-credit: #2a78d6;
+    --series-debit:  #eb6834;
+    --grid: #e8e6e0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])).viz-root {
+      color-scheme: dark;
+      --surface-0: #121211;
+      --surface-1: #1a1a19;
+      --border:    #33332f;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #8f8e85;
+      --series-credit: #3987e5;
+      --series-debit:  #d95926;
+      --grid: #2b2b28;
+    }
+  }
+  :root[data-theme="dark"].viz-root {
+    color-scheme: dark;
+    --surface-0: #121211; --surface-1: #1a1a19; --border: #33332f;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8f8e85;
+    --series-credit: #3987e5; --series-debit: #d95926; --grid: #2b2b28;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding-block: 24px; padding-inline: 16px;
+    background: var(--surface-0); color: var(--text-primary);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  h2 { font-size: 14px; margin: 0 0 12px; color: var(--text-secondary); font-weight: 600; }
+  .sub { color: var(--text-muted); font-size: 13px; margin: 0 0 24px; }
+
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin-bottom: 16px;
+  }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .tile .k { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+  .tile .v { font-size: 24px; font-weight: 650; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .tile .v.small { font-size: 17px; }
+
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; color: var(--text-secondary); }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: baseline; }
+  .chart-scroll { overflow-x: auto; }
+  svg .bar { transition: opacity .12s ease; }
+  svg .bar:hover { opacity: .72; }
+  svg text.tick { font-size: 11px; fill: var(--text-muted); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-weight: 600; color: var(--text-secondary); padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .debit  { color: var(--series-debit); }
+  .credit { color: var(--series-credit); }
+  .table-scroll { overflow-x: auto; }
+  .muted { color: var(--text-muted); }
+
+  .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
+  select, button {
+    font: inherit; padding: 6px 10px; border-radius: 7px;
+    border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+  }
+  button { cursor: pointer; }
+  details { margin-top: 12px; }
+  summary { cursor: pointer; color: var(--text-secondary); font-size: 13px; }
+  .badge { font-size: 11px; padding: 2px 7px; border-radius: 99px; border: 1px solid var(--border); color: var(--text-secondary); }
+  .empty { color: var(--text-muted); padding: 24px 0; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Relevés bancaires</h1>
+  <p class="sub">
+    Dernière extraction :
+    {% if totaux.last_run %}{{ totaux.last_run.strftime("%d/%m/%Y à %H:%M") }}{% else %}aucune{% endif %}
+    · {{ aujourdhui.strftime("%d/%m/%Y") }}
+  </p>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Comptes</div><div class="v">{{ totaux.accounts }}</div></div>
+    <div class="tile"><div class="k">Écritures</div><div class="v">{{ totaux.transactions }}</div></div>
+    <div class="tile"><div class="k">Relevés archivés</div><div class="v">{{ totaux.statements }}</div></div>
+    <div class="tile">
+      <div class="k">Solde total</div>
+      <div class="v small">
+        {% for devise, montant in solde_total.items() %}{{ montant }} {{ devise }}{% if not loop.last %}<br>{% endif %}{% else %}—{% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <form class="filters" method="get" action="/">
+    <label for="compte" class="muted">Compte</label>
+    <select name="compte" id="compte">
+      <option value="">Tous les comptes</option>
+      {% for c in comptes %}
+        <option value="{{ c.key }}" {% if compte_actif == c.key %}selected{% endif %}>
+          {{ c.bank|upper }} — {{ c.number }}{% if c.label %} ({{ c.label }}){% endif %}
+        </option>
+      {% endfor %}
+    </select>
+    <label for="limite" class="muted">Lignes</label>
+    <select name="limite" id="limite">
+      {% for n in [50, 100, 250, 500] %}
+        <option value="{{ n }}" {% if limite == n %}selected{% endif %}>{{ n }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Filtrer</button>
+  </form>
+
+  <section class="card">
+    <h2>Flux mensuels</h2>
+    {% if graphique.bars %}
+      <div class="legend">
+        <span><span class="swatch" style="background: var(--series-credit)"></span>Crédits</span>
+        <span><span class="swatch" style="background: var(--series-debit)"></span>Débits</span>
+        <span class="muted">maximum : {{ graphique.peak }}</span>
+      </div>
+      <div class="chart-scroll">
+        <svg viewBox="0 0 {{ graphique.width }} {{ graphique.height }}" width="100%"
+             height="{{ graphique.height }}" role="img"
+             aria-label="Débits et crédits par mois">
+          <line x1="0" y1="{{ graphique.baseline }}" x2="{{ graphique.width }}"
+                y2="{{ graphique.baseline }}" stroke="var(--grid)" stroke-width="1"/>
+          {% for b in graphique.bars %}
+            {% if b.series == "axis" %}
+              <text class="tick" x="{{ b.x }}" y="{{ b.y }}" text-anchor="middle">{{ b.label }}</text>
+            {% else %}
+              <path class="bar" d="{{ b.path }}" fill="var(--series-{{ b.series }})">
+                <title>{{ b.label }} — {{ "Crédits" if b.series == "credit" else "Débits" }} : {{ b.value }}</title>
+              </path>
+            {% endif %}
+          {% endfor %}
+        </svg>
+      </div>
+    {% else %}
+      <p class="empty">Aucune donnée à représenter.</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>Comptes</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Banque</th><th>Numéro</th><th>Libellé</th><th>Type</th>
+          <th class="num">Solde</th><th>Au</th>
+        </tr></thead>
+        <tbody>
+          {% for c in comptes %}
+            <tr>
+              <td>{{ c.bank|upper }}</td>
+              <td>{{ c.number }}</td>
+              <td>{{ c.label or "—" }}</td>
+              <td><span class="badge">{{ c.type }}</span></td>
+              <td class="num">{{ c.balance|montant }} {{ c.currency }}</td>
+              <td class="muted">{{ c.balance_date.strftime("%d/%m/%Y") if c.balance_date else "—" }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6" class="empty">Aucun compte — lancez <code>bankextract extract</code>.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Écritures <span class="muted">({{ ecritures|length }} affichée(s))</span></h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Valeur</th><th>Libellé</th>
+          <th class="num">Débit</th><th class="num">Crédit</th><th class="num">Solde</th><th>Référence</th>
+        </tr></thead>
+        <tbody>
+          {% for e in ecritures %}
+            <tr>
+              <td>{{ e.date.strftime("%d/%m/%Y") }}</td>
+              <td class="muted">{{ e.value_date.strftime("%d/%m/%Y") if e.value_date else "—" }}</td>
+              <td>{{ e.label }}</td>
+              <td class="num debit">{{ (-e.amount)|montant if e.amount < 0 else "" }}</td>
+              <td class="num credit">{{ e.amount|montant if e.amount > 0 else "" }}</td>
+              <td class="num muted">{{ e.balance_after|montant }}</td>
+              <td class="muted">{{ e.reference or "" }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="7" class="empty">Aucune écriture enregistrée.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Dernières exécutions</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Banque</th><th>Début</th><th class="num">Comptes</th>
+          <th class="num">Nouvelles écritures</th><th class="num">Relevés</th><th>État</th>
+        </tr></thead>
+        <tbody>
+          {% for r in executions %}
+            <tr>
+              <td>{{ r.bank|upper }}</td>
+              <td>{{ r.started_at.strftime("%d/%m/%Y %H:%M") }}</td>
+              <td class="num">{{ r.accounts_count }}</td>
+              <td class="num">{{ r.new_transactions }}</td>
+              <td class="num">{{ r.files_count }}</td>
+              <td>{% if r.errors %}<span class="badge debit">erreur</span>{% else %}<span class="badge">ok</span>{% endif %}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6" class="empty">Aucune exécution enregistrée.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% for r in executions if r.errors %}
+      <details>
+        <summary>{{ r.bank|upper }} — {{ r.started_at.strftime("%d/%m %H:%M") }} : détail de l'erreur</summary>
+        <pre class="muted" style="white-space: pre-wrap; font-size: 12px;">{{ r.errors }}</pre>
+      </details>
+    {% endfor %}
+  </section>
+
+</div>
+</body>
+</html>

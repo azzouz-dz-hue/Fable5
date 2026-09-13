@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets & données bancaires — NE JAMAIS COMMITER
+.env
+secrets.yaml
+config/*.local.yaml
+*.key
+
+# Données extraites
+data/
+downloads/
+exports/
+*.db
+*.sqlite3
+browser-profiles/
+logs/
+*.log
