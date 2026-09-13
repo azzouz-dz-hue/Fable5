@@ -78,14 +78,42 @@ class Settings(BaseModel):
         return {name: cfg for name, cfg in self.banks.items() if cfg.enabled}
 
 
+def local_overlay_path(path: Path | str = DEFAULT_CONFIG_PATH) -> Path:
+    """Fichier des réglages propres au poste, fusionné par-dessus le modèle.
+
+    Il porte vos banques et vos numéros de compte ; il est exclu du dépôt, si
+    bien que le modèle livré reste documenté et que rien de personnel n'est
+    publié par mégarde.
+    """
+    config_path = Path(path)
+    return config_path.with_name(f"{config_path.stem}.local{config_path.suffix}")
+
+
+def _fusionner(base: dict[str, Any], surcouche: dict[str, Any]) -> dict[str, Any]:
+    """Fusion en profondeur : la surcouche complète la base sans la remplacer."""
+    resultat = dict(base)
+    for cle, valeur in surcouche.items():
+        ancienne = resultat.get(cle)
+        if isinstance(ancienne, dict) and isinstance(valeur, dict):
+            resultat[cle] = _fusionner(ancienne, valeur)
+        else:
+            resultat[cle] = valeur
+    return resultat
+
+
 def load_settings(path: Path | str = DEFAULT_CONFIG_PATH) -> Settings:
-    """Charge `config/banks.yaml` puis `.env`, et applique les valeurs par défaut."""
+    """Charge `config/banks.yaml`, sa surcouche locale puis `.env`."""
     load_dotenv(override=False)
 
     config_path = Path(path)
     raw: dict[str, Any] = {}
     if config_path.exists():
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+
+    surcouche_path = local_overlay_path(config_path)
+    if surcouche_path.exists():
+        surcouche = yaml.safe_load(surcouche_path.read_text(encoding="utf-8")) or {}
+        raw = _fusionner(raw, surcouche)
 
     # Un Chromium préinstallé (image CI, poste verrouillé) prime sur le téléchargement.
     browser = raw.setdefault("browser", {})

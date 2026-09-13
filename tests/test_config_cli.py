@@ -100,3 +100,41 @@ def test_cli_aide_disponible():
     assert resultat.exit_code == 0
     for commande in ("extract", "login", "dashboard", "export", "inspect"):
         assert commande in resultat.stdout
+
+
+def test_surcouche_locale_complete_le_modele(tmp_path):
+    """Les réglages du poste s'ajoutent au modèle documenté sans le réécrire."""
+    import yaml
+
+    from bankextract.config import local_overlay_path
+
+    modele = tmp_path / "banks.yaml"
+    modele.write_text(
+        yaml.safe_dump(
+            {"banks": {"bna": {"connector": "bna", "enabled": False, "history_days": 90}}}
+        )
+    )
+    local_overlay_path(modele).write_text(
+        yaml.safe_dump({"banks": {"bna": {"enabled": True}, "cpa": {"connector": "scenario"}}})
+    )
+
+    settings = load_settings(modele)
+
+    assert settings.banks["bna"].enabled is True
+    assert settings.banks["bna"].history_days == 90, "le modèle reste la base"
+    assert settings.banks["cpa"].connector == "scenario"
+
+
+def test_surcouche_absente_sans_effet(tmp_path):
+    import yaml
+
+    modele = tmp_path / "banks.yaml"
+    modele.write_text(yaml.safe_dump({"banks": {"bna": {"connector": "bna"}}}))
+
+    assert load_settings(modele).banks["bna"].connector == "bna"
+
+
+def test_cli_app_disponible():
+    resultat = runner.invoke(app, ["--help"])
+
+    assert "app" in resultat.stdout and "setup" in resultat.stdout

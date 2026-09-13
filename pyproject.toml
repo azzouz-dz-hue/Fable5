@@ -51,7 +51,7 @@ where = ["src"]
 # de l'enregistreur et le gabarit du tableau de bord : seuls les fichiers .py
 # sont embarqués par défaut.
 [tool.setuptools.package-data]
-bankextract = ["recorder/*.js", "dashboard/templates/*.html"]
+bankextract = ["recorder/*.js", "dashboard/templates/*.html", "app/templates/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

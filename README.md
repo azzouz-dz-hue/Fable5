@@ -56,7 +56,16 @@ robot s'arrête et vous demande le code au terminal.
 
 ## Installation
 
-### Windows — la voie la plus simple
+### Windows — en un clic
+
+**[Télécharger BankExtract pour Windows](https://github.com/azzouz-dz-hue/Fable5/releases/download/windows-latest/BankExtract-Windows.zip)** — décompressez, double-cliquez
+sur `bankextract.exe`, l'interface s'ouvre dans le navigateur. Tout s'y pilote à
+la souris : ajouter une banque, enregistrer le parcours, lancer l'extraction,
+consulter les relevés.
+
+Le guide pas à pas est dans **[DEMARRAGE.md](DEMARRAGE.md)**.
+
+### Windows — installation complète
 
 Dans PowerShell :
 
@@ -65,12 +74,7 @@ irm https://raw.githubusercontent.com/azzouz-dz-hue/Fable5/claude/bank-statement
 ```
 
 Le script installe tout dans `%USERPROFILE%\BankExtract` et place un raccourci
-sur le Bureau. **[DEMARRAGE.md](DEMARRAGE.md) décrit le premier essai pas à
-pas**, sans jargon.
-
-Un exécutable `bankextract.exe` est également compilé à chaque modification :
-onglet *Actions* du dépôt → dernière exécution « Exécutable Windows » →
-*Artifacts* → `BankExtract-Windows`.
+sur le Bureau. À préférer si vous comptez utiliser l'outil régulièrement.
 
 ### macOS, Linux, ou installation manuelle
 

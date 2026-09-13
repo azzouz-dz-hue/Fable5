@@ -1,6 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 """Recette PyInstaller : produit bankextract.exe pour Windows.
 
+Double-cliqué, l'exécutable ouvre l'interface graphique dans le navigateur ;
+lancé avec des arguments, il se comporte comme l'outil en ligne de commande.
+
 Compilée par GitHub Actions (.github/workflows/build-windows.yml), sur un vrai
 Windows — PyInstaller ne sait pas produire un exécutable Windows depuis Linux.
 
@@ -55,7 +58,7 @@ analysis = Analysis(
     hookspath=[],
     runtime_hooks=[],
     # Allège l'exécutable : ces paquets ne servent qu'aux tests et au tracé.
-    excludes=["tkinter", "matplotlib", "pytest", "reportlab", "aiosmtpd", "IPython"],
+    excludes=["matplotlib", "pytest", "reportlab", "aiosmtpd", "IPython"],
     noarchive=False,
 )
 

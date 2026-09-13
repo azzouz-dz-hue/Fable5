@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BankExtract</title>
+<style>
+  :root {
+    color-scheme: light;
+    --fond: #f4f3f0;
+    --surface: #fcfcfb;
+    --bord: #e2e0da;
+    --trait: #e8e6e0;
+    --texte: #0b0b0b;
+    --texte-doux: #52514e;
+    --texte-discret: #7a7873;
+    --accent: #2a78d6;
+    --accent-doux: #eaf2fd;
+    --succes: #008300;
+    --alerte: #eb6834;
+    --erreur: #e34948;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --fond: #121211; --surface: #1a1a19; --bord: #33332f; --trait: #2b2b28;
+      --texte: #ffffff; --texte-doux: #c3c2b7; --texte-discret: #8f8e85;
+      --accent: #3987e5; --accent-doux: #16283f;
+      --succes: #4caf50; --alerte: #d95926; --erreur: #e66767;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding-block: 28px; padding-inline: 16px;
+    background: var(--fond); color: var(--texte);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .page { max-width: 940px; margin: 0 auto; }
+
+  header { margin-bottom: 24px; }
+  .entete { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sous-titre { color: var(--texte-discret); font-size: 14px; margin: 0; }
+
+  .tuiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .tuile { background: var(--surface); border: 1px solid var(--bord); border-radius: 10px; padding: 14px 16px; }
+  .tuile .etiquette { font-size: 12px; color: var(--texte-discret); text-transform: uppercase; letter-spacing: .04em; }
+  .tuile .valeur { font-size: 23px; font-weight: 650; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .tuile .valeur.petite { font-size: 15px; font-weight: 600; }
+
+  .carte { background: var(--surface); border: 1px solid var(--bord); border-radius: 10px; padding: 18px; margin-bottom: 16px; }
+  h2 { font-size: 15px; margin: 0 0 14px; font-weight: 650; }
+  h2 .compte { color: var(--texte-discret); font-weight: 400; }
+
+  .banque { border: 1px solid var(--bord); border-radius: 9px; padding: 14px 16px; margin-bottom: 10px; }
+  .banque-entete { display: flex; justify-content: space-between; align-items: start; gap: 12px; flex-wrap: wrap; }
+  .banque-nom { font-weight: 650; font-size: 16px; }
+  .banque-detail { color: var(--texte-discret); font-size: 13px; margin-top: 2px; word-break: break-all; }
+
+  .jalons { display: flex; gap: 14px; flex-wrap: wrap; margin: 12px 0; font-size: 13px; }
+  .jalon { display: flex; align-items: center; gap: 6px; color: var(--texte-doux); }
+  .pastille { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .pastille.fait { background: var(--succes); }
+  .pastille.reste { background: var(--alerte); }
+
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  button, .bouton {
+    font: inherit; font-size: 14px; padding: 8px 14px; border-radius: 8px;
+    border: 1px solid var(--bord); background: var(--surface); color: var(--texte);
+    cursor: pointer; text-decoration: none; display: inline-block;
+  }
+  button:hover:not(:disabled), .bouton:hover { border-color: var(--accent); color: var(--accent); }
+  /* Un bouton inerte ne doit pas garder l'apparence d'un bouton cliquable. */
+  button:disabled {
+    opacity: .5; cursor: not-allowed;
+    background: var(--fond); border-color: var(--bord); color: var(--texte-discret);
+  }
+  button.principal { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.principal:disabled { background: var(--fond); color: var(--texte-discret); }
+  button.principal:hover:not(:disabled) { filter: brightness(1.08); color: #fff; }
+  button.discret { color: var(--texte-discret); }
+  button.discret:hover:not(:disabled) { border-color: var(--erreur); color: var(--erreur); }
+
+  form.grille { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  label { display: block; font-size: 13px; color: var(--texte-doux); margin-bottom: 4px; }
+  input, select {
+    font: inherit; width: 100%; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid var(--bord); background: var(--fond); color: var(--texte);
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .pleine-largeur { grid-column: 1 / -1; }
+  .aide { font-size: 12px; color: var(--texte-discret); margin-top: 5px; }
+
+  #journal {
+    background: var(--fond); border: 1px solid var(--bord); border-radius: 8px;
+    padding: 12px; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px;
+    max-height: 260px; overflow-y: auto; white-space: pre-wrap; color: var(--texte-doux);
+  }
+  .bandeau { padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; font-size: 14px; }
+  .bandeau.info { background: var(--accent-doux); color: var(--accent); }
+  .bandeau.bon { background: color-mix(in srgb, var(--succes) 12%, transparent); color: var(--succes); }
+  .bandeau.mauvais { background: color-mix(in srgb, var(--erreur) 12%, transparent); color: var(--erreur); }
+
+  .tourne { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--accent);
+            border-top-color: transparent; border-radius: 50%; animation: tourner .8s linear infinite;
+            vertical-align: -1px; margin-right: 7px; }
+  @keyframes tourner { to { transform: rotate(360deg); } }
+
+  .vide { color: var(--texte-discret); text-align: center; padding: 22px 0; }
+  .etapes { counter-reset: etape; margin: 0; padding: 0; list-style: none; }
+  .etapes li { counter-increment: etape; position: relative; padding-left: 30px; margin-bottom: 8px;
+               color: var(--texte-doux); font-size: 14px; }
+  .etapes li::before {
+    content: counter(etape); position: absolute; left: 0; top: 1px;
+    width: 20px; height: 20px; border-radius: 50%; background: var(--accent-doux);
+    color: var(--accent); font-size: 12px; font-weight: 650; display: grid; place-items: center;
+  }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div class="entete">
+      <div>
+        <h1>BankExtract</h1>
+        <p class="sous-titre">Extraction automatique de vos relevés de comptes bancaires</p>
+      </div>
+      <a class="bouton" href="/releves" target="_blank" rel="noopener">Voir les relevés</a>
+    </div>
+  </header>
+
+  <div class="tuiles">
+    <div class="tuile"><div class="etiquette">Banques</div><div class="valeur" id="t-banques">—</div></div>
+    <div class="tuile"><div class="etiquette">Comptes</div><div class="valeur" id="t-comptes">—</div></div>
+    <div class="tuile"><div class="etiquette">Écritures</div><div class="valeur" id="t-ecritures">—</div></div>
+    <div class="tuile"><div class="etiquette">Dernière extraction</div><div class="valeur petite" id="t-derniere">—</div></div>
+  </div>
+
+  <section class="carte" id="bloc-operation" hidden>
+    <h2 id="operation-titre">Opération</h2>
+    <div class="bandeau" id="operation-bandeau"></div>
+    <div id="journal"></div>
+  </section>
+
+  <section class="carte">
+    <h2>Mes banques <span class="compte" id="compte-banques"></span></h2>
+    <div id="liste-banques"><p class="vide">Chargement…</p></div>
+  </section>
+
+  <section class="carte">
+    <h2>Ajouter une banque</h2>
+    <form class="grille" id="formulaire-banque">
+      <div>
+        <label for="f-nom">Nom court</label>
+        <input id="f-nom" name="nom" placeholder="bna" required>
+        <p class="aide">Sans espace ni accent.</p>
+      </div>
+      <div>
+        <label for="f-libelle">Libellé</label>
+        <input id="f-libelle" name="libelle" placeholder="BNA — compte SARL">
+      </div>
+      <div class="pleine-largeur">
+        <label for="f-url">Adresse du portail</label>
+        <input id="f-url" name="url" type="url" placeholder="https://ebanking.bna.dz" required>
+      </div>
+      <div>
+        <label for="f-compte">Numéro de compte</label>
+        <input id="f-compte" name="numero_compte" placeholder="00100 987654321 09">
+      </div>
+      <div>
+        <label for="f-devise">Devise</label>
+        <select id="f-devise" name="devise">
+          <option>DZD</option><option>EUR</option><option>USD</option>
+        </select>
+      </div>
+      <div>
+        <label for="f-otp">Code de connexion</label>
+        <select id="f-otp" name="source_otp">
+          {% for source in sources_otp %}<option value="{{ source }}">{{ source }}</option>{% endfor %}
+        </select>
+        <p class="aide">« manual » : le code vous sera demandé ici.</p>
+      </div>
+      <div>
+        <label for="f-jours">Historique (jours)</label>
+        <input id="f-jours" name="historique_jours" type="number" value="90" min="1" max="3650">
+      </div>
+      <div class="pleine-largeur actions">
+        <button type="submit" class="principal">Enregistrer la banque</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="carte">
+    <h2>Comment procéder</h2>
+    <ol class="etapes">
+      <li>Ajoutez votre banque ci-dessus, avec l'adresse de son site.</li>
+      <li>Déposez vos identifiants : ils vont dans le coffre de Windows, jamais dans un fichier.</li>
+      <li>Enregistrez le parcours : une fenêtre s'ouvre, faites votre manipulation habituelle
+          jusqu'au téléchargement du relevé, puis fermez-la.</li>
+      <li>Lancez l'extraction : le logiciel refait tout seul ce que vous avez montré.</li>
+    </ol>
+    <p class="aide" style="margin-top:14px">
+      Vos réglages sont dans <code>{{ config_path }}</code>. Les relevés et exports sont
+      déposés dans le dossier <code id="dossier-exports">data</code>.
+    </p>
+  </section>
+
+</div>
+
+<dialog id="boite-identifiants" style="border:1px solid var(--bord);border-radius:10px;padding:20px;background:var(--surface);color:var(--texte);max-width:380px">
+  <form method="dialog" id="formulaire-identifiants">
+    <h2 style="margin-bottom:6px">Identifiants — <span id="id-banque-nom"></span></h2>
+    <p class="aide" style="margin-bottom:14px">
+      Ils sont remis au coffre de Windows. Le logiciel ne les écrit dans aucun fichier.
+    </p>
+    <label for="id-utilisateur">Identifiant</label>
+    <input id="id-utilisateur" autocomplete="off" required style="margin-bottom:12px">
+    <label for="id-motdepasse">Mot de passe</label>
+    <input id="id-motdepasse" type="password" autocomplete="off" required style="margin-bottom:16px">
+    <div class="actions">
+      <button value="ok" class="principal">Enregistrer</button>
+      <button value="annuler" type="button" onclick="document.getElementById('boite-identifiants').close()">Annuler</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let banqueCourante = null;
+let occupe = false;
+
+async function appeler(url, options = {}) {
+  const reponse = await fetch(url, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  const donnees = await reponse.json().catch(() => ({}));
+  if (!reponse.ok) throw new Error(donnees.detail || `Erreur ${reponse.status}`);
+  return donnees;
+}
+
+function pastille(fait, texteFait, texteReste) {
+  return `<span class="jalon"><span class="pastille ${fait ? "fait" : "reste"}"></span>${
+    fait ? texteFait : texteReste}</span>`;
+}
+
+function afficherBanques(banques) {
+  $("compte-banques").textContent = banques.length ? `(${banques.length})` : "";
+  if (!banques.length) {
+    $("liste-banques").innerHTML =
+      `<p class="vide">Aucune banque. Ajoutez-en une ci-dessous pour commencer.</p>`;
+    return;
+  }
+  $("liste-banques").innerHTML = banques.map((b) => `
+    <div class="banque">
+      <div class="banque-entete">
+        <div>
+          <div class="banque-nom">${b.libelle}</div>
+          <div class="banque-detail">${b.url || "adresse non renseignée"}${
+            b.numero_compte ? " · compte " + b.numero_compte : ""}</div>
+        </div>
+      </div>
+      <div class="jalons">
+        ${pastille(b.identifiants_prets, "identifiants déposés", "identifiants à déposer")}
+        ${pastille(b.parcours_enregistre, "parcours enregistré", "parcours à enregistrer")}
+      </div>
+      ${b.parcours_enregistre && b.identifiants_prets ? "" :
+        `<p class="aide" style="margin:-4px 0 10px">Pour extraire : ${
+          [!b.identifiants_prets ? "déposez vos identifiants" : null,
+           !b.parcours_enregistre ? "enregistrez le parcours" : null]
+          .filter(Boolean).join(", puis ")}.</p>`}
+      <div class="actions">
+        <button onclick="ouvrirIdentifiants('${b.cle}', '${b.libelle.replace(/'/g, "\\'")}')"
+                ${occupe ? "disabled" : ""}>Déposer les identifiants</button>
+        <button onclick="lancer('enregistrer', '${b.cle}')"
+                ${occupe || !b.url ? "disabled" : ""}>Enregistrer le parcours</button>
+        <button class="principal" onclick="lancer('extraire', '${b.cle}')"
+                ${occupe || !b.parcours_enregistre || !b.identifiants_prets ? "disabled" : ""}>
+          Lancer l'extraction</button>
+        <button onclick="lancer('essai', '${b.cle}')"
+                ${occupe || !b.parcours_enregistre ? "disabled" : ""}>Essai visible</button>
+        <button class="discret" onclick="retirer('${b.cle}', '${b.libelle.replace(/'/g, "\\'")}')"
+                ${occupe ? "disabled" : ""}>Retirer</button>
+      </div>
+    </div>`).join("");
+}
+
+function afficherOperation(operation) {
+  if (!operation) { $("bloc-operation").hidden = true; return; }
+  $("bloc-operation").hidden = false;
+  $("operation-titre").textContent = operation.nom;
+
+  const bandeau = $("operation-bandeau");
+  if (operation.etat === "en_cours") {
+    bandeau.className = "bandeau info";
+    bandeau.innerHTML = `<span class="tourne"></span>En cours depuis ${operation.duree} s…`;
+  } else if (operation.etat === "termine") {
+    bandeau.className = "bandeau bon";
+    bandeau.textContent = operation.resume || "Terminé.";
+  } else {
+    bandeau.className = "bandeau mauvais";
+    bandeau.textContent = operation.erreur || "Échec.";
+  }
+
+  const journal = $("journal");
+  const enBas = journal.scrollHeight - journal.scrollTop - journal.clientHeight < 40;
+  journal.textContent = operation.lignes.join("\n");
+  if (enBas) journal.scrollTop = journal.scrollHeight;
+}
+
+async function rafraichir() {
+  try {
+    const etat = await appeler("/api/etat");
+    occupe = etat.occupe;
+    $("t-banques").textContent = etat.banques.length;
+    $("t-comptes").textContent = etat.totaux.comptes;
+    $("t-ecritures").textContent = etat.totaux.ecritures;
+    $("t-derniere").textContent = etat.totaux.derniere_extraction || "jamais";
+    $("dossier-exports").textContent = etat.dossiers.exports;
+    afficherBanques(etat.banques);
+    afficherOperation(etat.operation);
+  } catch (erreur) {
+    console.error(erreur);
+  }
+}
+
+async function lancer(action, cle) {
+  try {
+    await appeler(`/api/operations/${action}/${cle}`, { method: "POST" });
+    occupe = true;
+    await rafraichir();
+  } catch (erreur) {
+    alert(erreur.message);
+  }
+}
+
+async function retirer(cle, libelle) {
+  if (!confirm(`Retirer « ${libelle} » ? Le parcours enregistré est conservé sur le disque.`)) return;
+  try {
+    await appeler(`/api/banques/${cle}`, { method: "DELETE" });
+    await rafraichir();
+  } catch (erreur) {
+    alert(erreur.message);
+  }
+}
+
+function ouvrirIdentifiants(cle, libelle) {
+  banqueCourante = cle;
+  $("id-banque-nom").textContent = libelle;
+  $("id-utilisateur").value = "";
+  $("id-motdepasse").value = "";
+  $("boite-identifiants").showModal();
+}
+
+$("formulaire-identifiants").addEventListener("submit", async (evenement) => {
+  if (evenement.submitter && evenement.submitter.value !== "ok") return;
+  const corps = {
+    banque: banqueCourante,
+    utilisateur: $("id-utilisateur").value,
+    mot_de_passe: $("id-motdepasse").value,
+  };
+  $("id-motdepasse").value = "";
+  try {
+    const reponse = await appeler("/api/identifiants", {
+      method: "POST", body: JSON.stringify(corps),
+    });
+    await rafraichir();
+    alert(reponse.message);
+  } catch (erreur) {
+    alert(erreur.message);
+  }
+});
+
+$("formulaire-banque").addEventListener("submit", async (evenement) => {
+  evenement.preventDefault();
+  const donnees = Object.fromEntries(new FormData(evenement.target));
+  donnees.historique_jours = Number(donnees.historique_jours);
+  try {
+    await appeler("/api/banques", { method: "POST", body: JSON.stringify(donnees) });
+    evenement.target.reset();
+    $("f-jours").value = 90;
+    await rafraichir();
+  } catch (erreur) {
+    alert(erreur.message);
+  }
+});
+
+rafraichir();
+setInterval(rafraichir, 1500);
+</script>
+</body>
+</html>

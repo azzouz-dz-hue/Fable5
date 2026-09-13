@@ -301,6 +301,52 @@ def dashboard(
     uvicorn.run(create_app(settings), host=host, port=port, log_level="warning")
 
 
+@app.command(name="app")
+def interface(
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c"),
+    port: int = typer.Option(0, "--port", "-p", help="0 = port choisi automatiquement."),
+    sans_navigateur: bool = typer.Option(
+        False, "--sans-navigateur", help="Ne pas ouvrir le navigateur au démarrage."
+    ),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Ouvre l'interface graphique dans le navigateur.
+
+    C'est ce que fait un double-clic sur l'exécutable : tout s'y pilote à la
+    souris, sans ligne de commande.
+    """
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from .app import creer_application, port_libre
+
+    _setup_logging(verbose)
+    load_settings(config).paths.ensure()
+
+    port = port or port_libre()
+    adresse = f"http://127.0.0.1:{port}"
+
+    console.print()
+    console.print("  [bold]BankExtract[/bold] — interface")
+    console.print(f"  Ouvrez [cyan]{adresse}[/cyan] si la page ne s'affiche pas toute seule.")
+    console.print("  [dim]Gardez cette fenêtre ouverte. Ctrl+C pour quitter.[/dim]")
+    console.print()
+
+    if not sans_navigateur:
+        # Laisse le serveur démarrer avant d'ouvrir la page.
+        threading.Timer(1.2, lambda: webbrowser.open(adresse)).start()
+
+    try:
+        uvicorn.run(
+            creer_application(config), host="127.0.0.1", port=port, log_level="warning"
+        )
+    except KeyboardInterrupt:
+        console.print("\n[dim]Interface arrêtée.[/dim]")
+
+
+
 @app.command()
 def setup(
     config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c"),

@@ -15,7 +15,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # Écriture nécessaire pour publier l'exécutable en téléchargement direct.
+  contents: write
 
 # Une poussée rapide sur la même branche remplace la compilation en cours
 # plutôt que d'en lancer une seconde en parallèle.
@@ -112,6 +113,31 @@ jobs:
           if ($connecteurs -notmatch "scenario") { throw "registre des connecteurs incomplet" }
           Write-Host "Registre des connecteurs accessible"
 
+      # C'est le chemin du double-clic : l'interface doit reellement s'ouvrir.
+      - name: Vérifier que l'interface démarre
+        shell: pwsh
+        run: |
+          $processus = Start-Process -FilePath "dist\bankextract.exe" `
+            -ArgumentList "app","--port","8765","--sans-navigateur" `
+            -PassThru -NoNewWindow
+          try {
+            $pret = $false
+            foreach ($essai in 1..30) {
+              Start-Sleep -Seconds 2
+              try {
+                $sante = Invoke-RestMethod "http://127.0.0.1:8765/api/sante" -TimeoutSec 3
+                if ($sante.statut -eq "ok") { $pret = $true; break }
+              } catch { }
+            }
+            if (-not $pret) { throw "l'interface n'a pas repondu en 60 s" }
+
+            $page = Invoke-WebRequest "http://127.0.0.1:8765/" -UseBasicParsing -TimeoutSec 10
+            if ($page.Content -notmatch "Ajouter une banque") { throw "gabarit de l'interface absent" }
+            Write-Host "Interface operationnelle depuis l'executable"
+          } finally {
+            Stop-Process -Id $processus.Id -Force -ErrorAction SilentlyContinue
+          }
+
       - name: Préparer le dossier livrable
         shell: pwsh
         run: |
@@ -131,3 +157,32 @@ jobs:
           path: BankExtract-Windows.zip
           retention-days: 90
           if-no-files-found: error
+
+      # Publication en téléchargement direct : contrairement aux artefacts,
+      # une release se télécharge sans compte GitHub et ne périme pas.
+      - name: Publier en téléchargement direct
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "windows-latest"
+          $titre = "BankExtract pour Windows"
+          $notes = @"
+          Version la plus récente, compilée automatiquement depuis la branche de développement.
+
+          **Téléchargez ``BankExtract-Windows.zip``**, décompressez-le, puis double-cliquez sur
+          ``bankextract.exe`` : l'interface s'ouvre dans votre navigateur.
+
+          Au tout premier lancement, le navigateur nécessaire (environ 150 Mo) est téléchargé.
+
+          Commit : $($env:GITHUB_SHA.Substring(0,7))
+          "@
+
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title $titre --notes $notes --prerelease --target $env:GITHUB_SHA
+          } else {
+            gh release edit $tag --notes $notes
+          }
+          gh release upload $tag BankExtract-Windows.zip --clobber
+          Write-Host "Disponible sur https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$tag"
