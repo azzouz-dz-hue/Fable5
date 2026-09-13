@@ -31,8 +31,9 @@ normalise ce qu'il en ramène.
 
 **Opérationnel et testé de bout en bout** : enregistrement du parcours, rejeu,
 OTP automatique, téléchargement, normalisation, base, exports, tableau de bord,
-récurrences et envoi par courriel. 176 tests, dont le cycle complet
+récurrences et envoi par courriel. 211 tests, dont le cycle complet
 *enregistrer → rejouer → analyser* contre un faux portail e-banking fourni.
+La suite passe aussi sur Windows, vérifiée à chaque modification.
 
 **Ce qui reste à faire pour VOS banques** : enregistrer une fois le parcours de
 chaque banque (`bankextract record`). Comptez cinq minutes — le temps de vous
@@ -46,11 +47,10 @@ ne peut faire à votre place, faute d'accès à un compte. Ce premier essai
 demandera vraisemblablement quelques ajustements, et le logiciel est construit
 pour que ces ajustements soient de la configuration, pas du code.
 
-Deux briques restent par ailleurs non éprouvées : la **passerelle SMS**
-(testée contre un serveur factice, jamais contre un vrai téléphone Android) et
-la **lecture d'OTP par IMAP** (peu couverte par les tests). En attendant,
-`provider: manual` fonctionne partout : le robot s'arrête et vous demande le
-code au terminal.
+Une brique reste par ailleurs non éprouvée en conditions réelles : la
+**passerelle SMS**, testée contre un serveur factice mais jamais contre un vrai
+téléphone Android. En attendant, `provider: manual` fonctionne partout : le
+robot s'arrête et vous demande le code au terminal.
 
 ---
 
@@ -526,8 +526,8 @@ class MaBanqueConnector(GenericPortalConnector):
 ## Tests
 
 ```bash
-pytest                      # 195 tests
-pytest -m "not e2e" -q      # 171 tests, sans le navigateur (~9 s)
+pytest                      # 211 tests
+pytest -m "not e2e" -q      # 187 tests, sans le navigateur (~10 s)
 ```
 
 Les tests de bout en bout tournent contre le faux portail de

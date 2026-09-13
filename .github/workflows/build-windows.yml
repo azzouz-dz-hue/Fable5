@@ -17,6 +17,12 @@ on:
 permissions:
   contents: read
 
+# Une poussée rapide sur la même branche remplace la compilation en cours
+# plutôt que d'en lancer une seconde en parallèle.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
   tests:
