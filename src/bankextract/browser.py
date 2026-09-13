@@ -19,6 +19,21 @@ from .config import BrowserConfig
 
 logger = logging.getLogger(__name__)
 
+
+class BrowserMissingError(RuntimeError):
+    """Chromium n'est pas installé sur le poste."""
+
+
+def explain_missing_browser(exc: Exception) -> Exception:
+    """Traduit l'erreur technique de Playwright en consigne actionnable."""
+    message = str(exc)
+    if "Executable doesn't exist" in message or "playwright install" in message:
+        return BrowserMissingError(
+            "Le navigateur nécessaire n'est pas encore installé.\n"
+            "Lancez une fois : bankextract setup"
+        )
+    return exc
+
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -85,9 +100,12 @@ def browser_session(config: BrowserConfig, bank: str) -> Iterator[BrowserSession
         launch_args["executable_path"] = config.executable_path
 
     with sync_playwright() as playwright:
-        context = playwright.chromium.launch_persistent_context(
-            user_data_dir=str(profile_dir), **launch_args
-        )
+        try:
+            context = playwright.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir), **launch_args
+            )
+        except Exception as exc:
+            raise explain_missing_browser(exc) from exc
         context.set_default_timeout(config.timeout_ms)
         page = context.pages[0] if context.pages else context.new_page()
         session = BrowserSession(context=context, page=page, config=config, bank=bank)
@@ -105,7 +123,10 @@ def ephemeral_browser(config: BrowserConfig, bank: str = "test") -> Iterator[Bro
         launch_args["executable_path"] = config.executable_path
 
     with sync_playwright() as playwright:
-        browser: Browser = playwright.chromium.launch(**launch_args)
+        try:
+            browser: Browser = playwright.chromium.launch(**launch_args)
+        except Exception as exc:
+            raise explain_missing_browser(exc) from exc
         context = browser.new_context(
             locale=config.locale,
             timezone_id=config.timezone,

@@ -12,11 +12,11 @@
 smtp:
   host: smtp.gmail.com          # ex. smtp.office365.com, mail.votre-domaine.dz
   port: 587
-  username: comptabilite@medicomedline.com
+  username: comptabilite@exemple.dz
   password_env: SMTP_PASSWORD   # le mot de passe reste dans .env
   use_tls: true                 # STARTTLS, port 587
   use_ssl: false                # SSL direct, port 465 (alors use_tls: false)
-  sender: comptabilite@medicomedline.com
+  sender: comptabilite@exemple.dz
   sender_name: BankExtract
   max_attachment_mb: 20
 
@@ -37,7 +37,7 @@ schedules:
     mail:
       enabled: true
       to:
-        - comptabilite@medicomedline.com
+        - comptabilite@exemple.dz
       cc: []
       subject: "Relevés bancaires — {banque} — {date}"
       attach_statements: true   # les PDF/CSV téléchargés depuis la banque
@@ -73,6 +73,6 @@ schedules:
     mail:
       enabled: true
       to:
-        - direction@medicomedline.com
+        - direction@exemple.dz
       attach_statements: false
       attach_exports: true

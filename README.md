@@ -56,11 +56,29 @@ code au terminal.
 
 ## Installation
 
+### Windows — la voie la plus simple
+
+Dans PowerShell :
+
+```powershell
+irm https://raw.githubusercontent.com/azzouz-dz-hue/Fable5/claude/bank-statement-extraction-5uas3w/install.ps1 | iex
+```
+
+Le script installe tout dans `%USERPROFILE%\BankExtract` et place un raccourci
+sur le Bureau. **[DEMARRAGE.md](DEMARRAGE.md) décrit le premier essai pas à
+pas**, sans jargon.
+
+Un exécutable `bankextract.exe` est également compilé à chaque modification :
+onglet *Actions* du dépôt → dernière exécution « Exécutable Windows » →
+*Artifacts* → `BankExtract-Windows`.
+
+### macOS, Linux, ou installation manuelle
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
-playwright install chromium        # une seule fois
+pip install .
+bankextract setup                  # télécharge le navigateur, une seule fois
 ```
 
 Vérifiez l'installation sur la banque de démonstration, sans toucher à une
@@ -197,7 +215,7 @@ schedules:
       at: "06:00"
     mail:
       enabled: true
-      to: [comptabilite@medicomedline.com]
+      to: [comptabilite@exemple.dz]
       attach_statements: true     # les relevés téléchargés depuis la banque
       attach_exports: true        # les fichiers CSV et Excel normalisés
 ```
@@ -241,10 +259,10 @@ prochain réveil** plutôt que perdue.
 smtp:
   host: smtp.gmail.com
   port: 587
-  username: comptabilite@medicomedline.com
+  username: comptabilite@exemple.dz
   password_env: SMTP_PASSWORD     # le mot de passe reste dans .env
   use_tls: true
-  sender: comptabilite@medicomedline.com
+  sender: comptabilite@exemple.dz
   max_attachment_mb: 20
 ```
 

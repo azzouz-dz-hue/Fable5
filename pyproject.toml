@@ -47,6 +47,12 @@ bankextract = "bankextract.cli:app"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Sans ceci, une installation normale (« pip install . ») omettrait le capteur
+# de l'enregistreur et le gabarit du tableau de bord : seuls les fichiers .py
+# sont embarqués par défaut.
+[tool.setuptools.package-data]
+bankextract = ["recorder/*.js", "dashboard/templates/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import getpass
 import logging
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -298,6 +299,61 @@ def dashboard(
     settings = load_settings(config)
     console.print(f"Tableau de bord : [cyan]http://{host}:{port}[/cyan]")
     uvicorn.run(create_app(settings), host=host, port=port, log_level="warning")
+
+
+@app.command()
+def setup(
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", "-c"),
+) -> None:
+    """Prépare le poste : télécharge le navigateur et crée les dossiers de travail.
+
+    À lancer une seule fois après l'installation. Le téléchargement du
+    navigateur pèse environ 150 Mo.
+    """
+    import subprocess
+
+    console.print("[bold]Préparation du poste[/bold]\n")
+
+    settings = load_settings(config)
+    settings.paths.ensure()
+    console.print(f"  [green]✓[/green] dossiers de travail prêts ({settings.paths.data_dir})")
+
+    if settings.browser.executable_path and Path(settings.browser.executable_path).exists():
+        console.print(
+            f"  [green]✓[/green] navigateur déjà présent "
+            f"({settings.browser.executable_path})"
+        )
+    else:
+        console.print("  [dim]…[/dim] téléchargement du navigateur (environ 150 Mo, patientez)")
+        try:
+            issue = subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                capture_output=True,
+                text=True,
+                timeout=900,
+            )
+        except Exception as exc:
+            console.print(f"  [red]✗[/red] téléchargement impossible : {exc}")
+            raise typer.Exit(code=1) from exc
+        if issue.returncode != 0:
+            console.print(f"  [red]✗[/red] {issue.stderr.strip()[:400]}")
+            console.print(
+                "\n  Vérifiez votre connexion, puis relancez [cyan]bankextract setup[/cyan]."
+            )
+            raise typer.Exit(code=1)
+        console.print("  [green]✓[/green] navigateur installé")
+
+    if not Path(config).exists():
+        console.print(
+            f"  [yellow]![/yellow] configuration absente ({config}) — "
+            "copiez le fichier config/banks.yaml fourni."
+        )
+    else:
+        console.print(f"  [green]✓[/green] configuration lue ({config})")
+
+    console.print("\n[green]Poste prêt.[/green] Étape suivante :")
+    console.print("  [cyan]bankextract record <banque> --url https://portail-de-votre-banque[/cyan]")
+
 
 
 # ---------------------------------------------------------------------- parcours

@@ -1,0 +1,127 @@
+# Compile l'exécutable Windows et vérifie que le logiciel y fonctionne.
+#
+# PyInstaller ne sait pas produire un exécutable Windows depuis Linux : c'est
+# donc ici, sur un vrai Windows, que l'exécutable est fabriqué et éprouvé.
+#
+# Récupérer le résultat : onglet « Actions » du dépôt → dernière exécution →
+# section « Artifacts » → BankExtract-Windows.
+
+name: Exécutable Windows
+
+on:
+  push:
+    branches: ["claude/bank-statement-extraction-**"]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+
+  tests:
+    name: Tests sur Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installer le logiciel et ses outils de test
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Vérifier la syntaxe du script d'installation
+        shell: pwsh
+        run: |
+          $erreurs = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path ./install.ps1), [ref]$null, [ref]$erreurs) | Out-Null
+          if ($erreurs) {
+            $erreurs | ForEach-Object {
+              Write-Host "::error file=install.ps1,line=$($_.Extent.StartLineNumber)::$($_.Message)"
+            }
+            exit 1
+          }
+          Write-Host "install.ps1 : syntaxe valide"
+
+      - name: Tests sans navigateur
+        run: pytest -m "not e2e" -q
+
+      - name: Installer le navigateur
+        run: python -m playwright install chromium
+
+      # Les tests pilotant un navigateur dépendent fortement de la machine :
+      # un échec ici est signalé mais ne doit pas priver d'un exécutable dont
+      # les tests de fond sont passés.
+      - name: Suite complète, navigateur compris
+        continue-on-error: true
+        run: pytest -q
+
+  executable:
+    name: Compilation de l'exécutable
+    needs: tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Installer le logiciel et PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+          pip install pyinstaller
+
+      - name: Compiler
+        run: >
+          pyinstaller packaging/bankextract.spec
+          --noconfirm --clean
+          --distpath dist --workpath build
+
+      - name: Vérifier que l'exécutable répond
+        shell: pwsh
+        run: |
+          $exe = "dist\bankextract.exe"
+          if (-not (Test-Path $exe)) { throw "executable introuvable" }
+          $taille = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          Write-Host "Taille : $taille Mo"
+
+          # L'aide doit lister les commandes principales.
+          $aide = & $exe --help 2>&1 | Out-String
+          foreach ($commande in @("record", "replay", "scheduler", "dashboard", "setup")) {
+            if ($aide -notmatch $commande) { throw "commande « $commande » absente de l'aide" }
+          }
+          Write-Host "Aide complete : les commandes attendues sont presentes"
+
+          # Les fichiers embarques doivent etre accessibles depuis l'executable.
+          $connecteurs = & $exe list --config config\banks.yaml 2>&1 | Out-String
+          if ($connecteurs -notmatch "scenario") { throw "registre des connecteurs incomplet" }
+          Write-Host "Registre des connecteurs accessible"
+
+      - name: Préparer le dossier livrable
+        shell: pwsh
+        run: |
+          $livrable = "BankExtract"
+          New-Item -ItemType Directory -Force -Path "$livrable\config" | Out-Null
+          Copy-Item dist\bankextract.exe $livrable\
+          Copy-Item config\banks.yaml, config\schedules.yaml $livrable\config\
+          Copy-Item .env.example $livrable\
+          Copy-Item README.md $livrable\
+          if (Test-Path DEMARRAGE.md) { Copy-Item DEMARRAGE.md $livrable\ }
+          Compress-Archive -Path $livrable\* -DestinationPath BankExtract-Windows.zip -Force
+          Write-Host "Archive prete"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BankExtract-Windows
+          path: BankExtract-Windows.zip
+          retention-days: 90
+          if-no-files-found: error
