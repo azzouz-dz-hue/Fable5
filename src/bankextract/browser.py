@@ -37,6 +37,17 @@ def browsers_root() -> Path:
     return Path.home() / ".cache" / "ms-playwright"
 
 
+#: Noms de l'exécutable selon la plateforme. Le dossier qui le contient, lui,
+#: change au fil des versions de Playwright — « chrome-linux » hier,
+#: « chrome-linux64 » aujourd'hui, « chrome-win64 » sous Windows — d'où une
+#: recherche par nom de fichier plutôt que par chemin exact.
+NOMS_EXECUTABLE = ("chrome.exe", "chrome", "headless_shell.exe", "headless_shell", "Chromium")
+
+#: Une fois trouvé, le navigateur ne disparaît pas : inutile de refouiller le
+#: disque à chaque rafraîchissement de l'interface.
+_navigateur_trouve = False
+
+
 def browser_installed(config: BrowserConfig | None = None) -> bool:
     """Dit si un Chromium utilisable est présent, sans démarrer Playwright.
 
@@ -49,19 +60,26 @@ def browser_installed(config: BrowserConfig | None = None) -> bool:
     if config and config.executable_path:
         return Path(config.executable_path).exists()
 
+    global _navigateur_trouve
+    if _navigateur_trouve:
+        return True
+
     racine = browsers_root()
     if not racine.is_dir():
         return False
+
     for dossier in racine.glob("chromium*"):
-        for relatif in (
-            "chrome-win/chrome.exe",
-            "chrome-linux/chrome",
-            "chrome-linux/headless_shell",
-            "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
-        ):
-            if (dossier / relatif).exists():
+        for nom in NOMS_EXECUTABLE:
+            if any(chemin.is_file() for chemin in dossier.rglob(nom)):
+                _navigateur_trouve = True
                 return True
     return False
+
+
+def reset_browser_cache() -> None:
+    """Oublie le résultat mémorisé — utile aux tests."""
+    global _navigateur_trouve
+    _navigateur_trouve = False
 
 
 def explain_missing_browser(exc: Exception) -> Exception:

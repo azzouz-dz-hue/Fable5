@@ -148,7 +148,15 @@ jobs:
 
             $page = Invoke-WebRequest "http://127.0.0.1:8765/" -UseBasicParsing -TimeoutSec 10
             if ($page.Content -notmatch "Ajouter une banque") { throw "gabarit de l'interface absent" }
-            Write-Host "Interface operationnelle depuis l'executable"
+
+            # L'etape precedente a installe le navigateur : l'interface doit le
+            # VOIR, sinon tous ses boutons restent grises. C'est ce maillon qui
+            # avait lache en production.
+            $etat = Invoke-RestMethod "http://127.0.0.1:8765/api/etat" -TimeoutSec 10
+            if (-not $etat.navigateur_pret) {
+              throw "l'interface ne detecte pas le navigateur pourtant installe"
+            }
+            Write-Host "Interface operationnelle et navigateur detecte"
           } finally {
             Stop-Process -Id $processus.Id -Force -ErrorAction SilentlyContinue
           }
