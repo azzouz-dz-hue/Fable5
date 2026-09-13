@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import getpass
 import logging
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -35,6 +37,28 @@ app = typer.Typer(
     add_completion=False,
 )
 console = Console()
+
+
+def _configurer_sortie() -> None:
+    """Force l'UTF-8 sur la sortie du terminal.
+
+    La console Windows travaille encore en cp1252, qui ne connaît ni « ✓ » ni
+    les traits des tableaux : sans cela, un simple message de confirmation fait
+    échouer la commande. Le repli « replace » garantit qu'un caractère exotique
+    dégrade l'affichage au lieu d'interrompre le programme.
+    """
+    for flux in (sys.stdout, sys.stderr):
+        reconfigurer = getattr(flux, "reconfigure", None)
+        if reconfigurer is None:
+            continue
+        with contextlib.suppress(Exception):
+            reconfigurer(encoding="utf-8", errors="replace")
+
+
+@app.callback()
+def _avant_chaque_commande() -> None:
+    """Exécuté avant toute commande."""
+    _configurer_sortie()
 
 
 def _setup_logging(verbose: bool) -> None:

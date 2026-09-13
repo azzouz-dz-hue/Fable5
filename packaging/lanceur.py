@@ -27,6 +27,11 @@ def main() -> int:
     import contextlib
     import os
 
+    from bankextract.cli import _configurer_sortie
+
+    # Avant le moindre affichage : la console Windows est en cp1252.
+    _configurer_sortie()
+
     dossier = _dossier_de_travail()
     # Dossier en lecture seule : on garde alors le dossier courant.
     with contextlib.suppress(OSError):

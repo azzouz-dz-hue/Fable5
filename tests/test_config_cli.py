@@ -1,5 +1,9 @@
 """Configuration, registre des connecteurs et interface en ligne de commande."""
 
+import os
+import subprocess
+import sys
+
 import pytest
 from typer.testing import CliRunner
 
@@ -138,3 +142,52 @@ def test_cli_app_disponible():
     resultat = runner.invoke(app, ["--help"])
 
     assert "app" in resultat.stdout and "setup" in resultat.stdout
+
+
+# ---------------------------------------------------------------- sortie console
+
+
+def _executer_avec_console_windows(code: str) -> subprocess.CompletedProcess:
+    """Exécute du code Python avec la sortie contrainte en cp1252.
+
+    C'est la situation d'une console Windows ordinaire, ou d'une sortie
+    redirigée vers un fichier journal.
+    """
+    environnement = {**os.environ, "PYTHONIOENCODING": "cp1252"}
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=environnement,
+        timeout=60,
+    )
+
+
+def test_les_symboles_passent_sur_une_console_windows():
+    """« ✓ » n'existe pas en cp1252 : sans précaution, la commande échoue."""
+    code = (
+        "from bankextract.cli import _configurer_sortie, console\n"
+        "_configurer_sortie()\n"
+        "console.print('[green]\\u2713[/green] pr\\u00eat \\u2014 \\u2022\\u2022\\u2022')\n"
+    )
+
+    issue = _executer_avec_console_windows(code)
+
+    assert issue.returncode == 0, issue.stderr
+
+
+def test_sans_la_correction_la_sortie_echouerait():
+    """Contrôle négatif : montre que la précaution sert vraiment à quelque chose."""
+    code = "import sys\nsys.stdout.write('\\u2713')\n"
+
+    issue = _executer_avec_console_windows(code)
+
+    assert issue.returncode != 0
+    assert "charmap" in issue.stderr or "encode" in issue.stderr
+
+
+def test_configurer_la_sortie_est_sans_effet_de_bord():
+    from bankextract.cli import _configurer_sortie
+
+    _configurer_sortie()
+    _configurer_sortie()  # deux fois de suite ne doit rien casser
