@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from importlib import import_module
+
 from ..config import BankConfig, Settings
 from .algeria import ALGERIAN_CONNECTORS
 from .base import BankConnector, LoginError, ScrapingError
@@ -14,6 +16,10 @@ _REGISTRY: dict[str, type[BankConnector]] = {
 _REGISTRY[GenericPortalConnector.name] = GenericPortalConnector
 _REGISTRY[DemoConnector.name] = DemoConnector
 
+#: Chargés à la demande : le rejeu importe `connectors.base`, l'importer ici
+#: au chargement du module créerait un cycle.
+_LAZY: dict[str, str] = {"scenario": "bankextract.recorder.replay:ScenarioConnector"}
+
 
 def register(connector: type[BankConnector]) -> type[BankConnector]:
     """Ajoute un connecteur maison au registre (utilisable comme décorateur)."""
@@ -22,11 +28,16 @@ def register(connector: type[BankConnector]) -> type[BankConnector]:
 
 
 def get_connector_class(name: str) -> type[BankConnector]:
-    try:
+    if name in _REGISTRY:
         return _REGISTRY[name]
-    except KeyError:
-        known = ", ".join(sorted(_REGISTRY))
-        raise KeyError(f"Connecteur inconnu : « {name} ». Disponibles : {known}") from None
+    if name in _LAZY:
+        module_path, _, attribute = _LAZY[name].partition(":")
+        module = import_module(module_path)
+        connector = getattr(module, attribute)
+        _REGISTRY[name] = connector
+        return connector
+    known = ", ".join(available_connectors())
+    raise KeyError(f"Connecteur inconnu : « {name} ». Disponibles : {known}")
 
 
 def build_connector(bank_name: str, config: BankConfig, settings: Settings) -> BankConnector:
@@ -43,7 +54,7 @@ def build_connector(bank_name: str, config: BankConfig, settings: Settings) -> B
 
 
 def available_connectors() -> list[str]:
-    return sorted(_REGISTRY)
+    return sorted(set(_REGISTRY) | set(_LAZY))
 
 
 __all__ = [

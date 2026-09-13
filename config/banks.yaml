@@ -171,6 +171,44 @@ banks:
       base_url: https://ebanking.agb.dz
 
   # -------------------------------------------------------------------------
+  # Banque pilotée par un PARCOURS ENREGISTRÉ — la voie la plus simple.
+  #
+  # Aucun sélecteur à relever : vous faites la manipulation une fois dans le
+  # navigateur, le logiciel l'enregistre et la rejoue ensuite tout seul.
+  #
+  #   bankextract record bna_parcours --url https://ebanking.bna.dz
+  #   bankextract replay bna_parcours
+  # -------------------------------------------------------------------------
+  bna_parcours:
+    connector: scenario
+    enabled: false
+    label: BNA — parcours enregistré
+    history_days: 60
+    username_env: BNA_USERNAME
+    password_env: BNA_PASSWORD
+
+    otp:
+      provider: manual        # bascule vers sms_gateway une fois la passerelle prête
+      timeout_seconds: 180
+
+    options:
+      scenario_path: scenarios/bna_parcours.json
+
+      # Le parcours télécharge un relevé mais ne lit pas le numéro de compte :
+      # renseignez-le ici pour que les écritures soient correctement rattachées.
+      account_number: "00100 987654321 09"
+      account_label: Compte courant SARL
+      currency: DZD
+
+      # Analyser les relevés téléchargés pour en extraire les écritures.
+      # Mettre à false pour se contenter d'archiver les PDF officiels.
+      parse_downloads: true
+
+      # Format attendu par les champs de date du portail, utilisé pour
+      # remplacer les jetons {{start}} et {{end}} du parcours.
+      date_format: "%d/%m/%Y"
+
+  # -------------------------------------------------------------------------
   # Banque de démonstration : tourne contre le faux portail des tests.
   # Sert à valider l'installation sans toucher à une vraie banque.
   #   .venv/bin/python tests/fixtures/fake_bank/server.py

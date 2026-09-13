@@ -31,7 +31,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.4"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    # Serveur SMTP local : les tests d'envoi ne sortent jamais sur Internet.
+    "aiosmtpd>=1.4",
+]
 
 [project.scripts]
 bankextract = "bankextract.cli:app"

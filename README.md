@@ -13,6 +13,7 @@ normalise ce qu'il en ramène.
 
 | Étape | Détail |
 |---|---|
+| **Apprentissage** | Vous faites la manipulation **une seule fois** dans un navigateur ; le logiciel enregistre le parcours et le rejoue ensuite seul. |
 | **Connexion** | Identifiants lus dans le trousseau système, jamais dans le dépôt. |
 | **Authentification forte** | Code OTP récupéré automatiquement (passerelle SMS, e-mail, TOTP) ou saisi au clavier. |
 | **Extraction** | Comptes, soldes et écritures, pagination suivie jusqu'au bout. |
@@ -21,22 +22,22 @@ normalise ce qu'il en ramène.
 | **Stockage** | SQLite (ou PostgreSQL), avec déduplication : relancer n'ajoute aucun doublon. |
 | **Exports** | CSV et Excel prêts pour la comptabilité, plus OFX pour les logiciels comptables. |
 | **Consultation** | Tableau de bord web local : soldes, flux mensuels, écritures, journal des exécutions. |
+| **Programmation** | Extractions récurrentes : chaque jour, chaque lundi, le 1er du mois… |
+| **Courriel** | Envoi automatique des relevés et exports aux adresses de votre choix. |
 
 ---
 
 ## État du projet
 
-**Opérationnel et testé de bout en bout** : le socle complet — connexion, OTP
-automatique, pagination, téléchargement, normalisation, base, exports et
-tableau de bord — tourne et est couvert par 108 tests, dont un parcours complet
-contre un faux portail e-banking fourni.
+**Opérationnel et testé de bout en bout** : enregistrement du parcours, rejeu,
+OTP automatique, téléchargement, normalisation, base, exports, tableau de bord,
+récurrences et envoi par courriel. 176 tests, dont le cycle complet
+*enregistrer → rejouer → analyser* contre un faux portail e-banking fourni.
 
-**Ce qui reste à faire pour VOS banques** : renseigner les sélecteurs CSS de
-chaque portail dans `config/banks.yaml`. Aucune banque algérienne ne publie la
-structure de son site et les portails ne sont pas accessibles publiquement :
-ces sélecteurs se relèvent en une quinzaine de minutes par banque, avec la
-commande `bankextract inspect` prévue pour cela (voir plus bas). Le code
-Python n'a pas à être modifié.
+**Ce qui reste à faire pour VOS banques** : enregistrer une fois le parcours de
+chaque banque (`bankextract record`). Comptez cinq minutes — le temps de vous
+connecter et de télécharger un relevé. Rien à programmer, aucun sélecteur à
+relever.
 
 ---
 
@@ -63,30 +64,209 @@ bankextract extract demo --since 2026-02-01 --until 2026-03-31
 bankextract dashboard
 ```
 
+Pour essayer l'enregistrement de parcours sur ce même portail fictif
+(identifiants `demo` / `demo123`, le code SMS est écrit dans `data/otp.txt`) :
+
+```bash
+bankextract record demo --url http://127.0.0.1:8777
+```
+
+---
+
+## Prise en main : enregistrer une banque
+
+C'est la seule étape manuelle, et elle ne se fait qu'une fois par banque.
+
+```bash
+bankextract record bna --url https://ebanking.bna.dz
+```
+
+Une fenêtre s'ouvre sur le portail. Vous faites **exactement ce que vous feriez
+d'habitude** :
+
+1. vous vous connectez ;
+2. vous saisissez le code SMS s'il est demandé ;
+3. vous naviguez jusqu'au relevé et vous le téléchargez ;
+4. vous **fermez la fenêtre**.
+
+Le logiciel affiche alors le parcours qu'il a retenu :
+
+```
+  # Action     Détail
+  1 goto       ouvrir https://ebanking.bna.dz
+  2 fill       saisir « … » dans input « Identifiant »
+  3 fill       saisir ••• dans input « Mot de passe »
+  4 click      button « Se connecter »
+  5 fill       saisir ••• dans input « Code à 6 chiffres »
+  6 click      button « Valider »
+  7 click      a « Mes comptes »
+  8 download   télécharger (a « Relevé PDF »)
+
+  ↳ étape 2 reconnue comme identifiant → {{username}}
+  ↳ étape 5 reconnue comme code d'authentification → {{otp}}
+```
+
+Il écrit `scenarios/bna.json` et vous donne les lignes à coller dans
+`config/banks.yaml`. À partir de là :
+
+```bash
+bankextract replay bna       # rejoue le parcours maintenant
+bankextract scenarios        # liste les parcours enregistrés
+```
+
+### Ce qui n'est jamais enregistré
+
+**Le mot de passe et le code SMS ne quittent pas la page.** Un champ de type
+`password` est remplacé par le marqueur `{{password}}` avant même que
+l'information ne parvienne au logiciel ; le champ de code devient `{{otp}}`.
+Le fichier `scenarios/bna.json` peut être lu par n'importe qui sans rien
+révéler. Un contrôle automatique signale toute valeur sensible qui aurait
+échappé au masquage, et les tests vérifient qu'aucun mot de passe n'atteint le
+disque.
+
+### Ce qui est reconnu tout seul
+
+| Élément | Comment il est repéré | Ce qu'il devient |
+|---|---|---|
+| Identifiant | champ saisi juste avant le mot de passe | `{{username}}` |
+| Mot de passe | champ de type `password` | `{{password}}` |
+| Code SMS | champ nommé *otp*, *code*, *sms*… après le mot de passe | `{{otp}}` |
+| Dates de période | valeurs reconnues comme des dates | `{{start}}` / `{{end}}` |
+| Téléchargement | clic suivi d'un fichier reçu | étape `download` |
+
+Les dates deviennent des jetons : sans cela, le rejeu redemanderait
+éternellement la même période. L'étape d'OTP est marquée facultative, car les
+banques qui reconnaissent « l'appareil de confiance » ne la redemandent pas.
+
+Tout reste modifiable : `scenarios/bna.json` est du JSON indenté, où chaque
+étape porte son libellé d'origine.
+
+### Pourquoi le rejeu résiste aux refontes
+
+Chaque étape retient **plusieurs sélecteurs**, du plus stable au plus fragile :
+identifiant, attribut `name`, libellé visible du bouton, puis chemin CSS. Au
+rejeu ils sont essayés dans l'ordre — un bouton qui change de classe mais garde
+son texte continue de fonctionner.
+
+Quand tous échouent, le message nomme l'étape fautive et les candidats essayés,
+et une capture d'écran est déposée dans `logs/screenshots/` :
+
+```
+✗ étape 7 (click a « Mes comptes ») : aucun sélecteur ne correspond
+  — le portail a peut-être changé. Candidats essayés : #accounts-link, text="Mes comptes"…
+```
+
+Il suffit alors de réenregistrer le parcours.
+
+---
+
+## Extractions programmées et envoi par courriel
+
+Les récurrences se décrivent dans `config/schedules.yaml` :
+
+```yaml
+schedules:
+  - name: releve-mensuel
+    enabled: true
+    banks: [bna]
+    period: mois_precedent        # le mois écoulé, en entier
+    recurrence:
+      frequency: mensuel
+      day_of_month: 1
+      at: "06:00"
+    mail:
+      enabled: true
+      to: [comptabilite@medicomedline.com]
+      attach_statements: true     # les relevés téléchargés depuis la banque
+      attach_exports: true        # les fichiers CSV et Excel normalisés
+```
+
+| Récurrence | Réglages |
+|---|---|
+| `quotidien` | `at` |
+| `hebdomadaire` | `at`, `day_of_week` (0 = lundi) |
+| `mensuel` | `at`, `day_of_month` — un 31 demandé devient le 28 ou le 30 selon le mois |
+| `intervalle` | `at`, `interval_days` |
+
+| Période extraite | Ce qu'elle couvre |
+|---|---|
+| `depuis_derniere_execution` | depuis la dernière fois, avec un jour de recouvrement |
+| `derniers_jours` | les `days` derniers jours |
+| `mois_en_cours` | du 1er du mois à aujourd'hui |
+| `mois_precedent` | le mois écoulé, du 1er au dernier jour |
+
+Vérifiez, puis lancez :
+
+```bash
+bankextract schedules                    # prochaines échéances
+bankextract mail-test vous@exemple.dz    # valide la configuration SMTP
+bankextract scheduler                    # tourne en continu
+bankextract scheduler --once             # vérifie une fois (pour cron)
+```
+
+Entrée cron recommandée — une vérification par heure suffit, le planificateur
+sait lesquelles sont échues :
+
+```cron
+0 * * * * cd /opt/bankextract && .venv/bin/bankextract scheduler --once >> logs/cron.log 2>&1
+```
+
+Une exécution manquée — poste éteint, coupure réseau — est **rattrapée au
+prochain réveil** plutôt que perdue.
+
+### Configurer l'envoi
+
+```yaml
+smtp:
+  host: smtp.gmail.com
+  port: 587
+  username: comptabilite@medicomedline.com
+  password_env: SMTP_PASSWORD     # le mot de passe reste dans .env
+  use_tls: true
+  sender: comptabilite@medicomedline.com
+  max_attachment_mb: 20
+```
+
+Avec Gmail ou Microsoft 365, créez un **mot de passe d'application** dédié
+plutôt que d'utiliser celui du compte.
+
+Le message récapitule l'extraction — comptes, soldes, totaux débit et crédit —
+et porte les fichiers en pièces jointes. Si l'ensemble dépasse la limite, les
+plus lourds sont écartés et nommés dans le corps plutôt que de faire rejeter
+l'envoi. En cas d'échec d'extraction, un message d'alerte part quand même
+(réglable par `send_on_error`).
+
 ---
 
 ## Utilisation courante
 
 ```bash
+bankextract record bna                 # enregistre le parcours (une fois par banque)
 bankextract login bna                  # enregistre les identifiants dans le trousseau
+bankextract replay bna                 # rejoue le parcours maintenant
+bankextract scenarios                  # parcours enregistrés
+
 bankextract extract                    # toutes les banques activées
 bankextract extract bna --days 30      # une banque, 30 derniers jours
 bankextract extract bna --headed       # en voyant le navigateur (mise au point)
+
+bankextract schedules                  # extractions programmées et prochaines échéances
+bankextract scheduler --once           # exécute ce qui est échu (appel par cron)
+bankextract mail-test vous@exemple.dz  # vérifie la configuration SMTP
+
 bankextract accounts                   # soldes connus
 bankextract export --since 2026-01-01  # export CSV + Excel de l'historique
 bankextract history                    # journal des exécutions
 bankextract dashboard                  # http://127.0.0.1:8000
 ```
 
-Automatisation quotidienne (cron, 6 h du matin) :
-
-```cron
-0 6 * * * cd /opt/bankextract && .venv/bin/bankextract extract >> logs/cron.log 2>&1
-```
-
 ---
 
-## Décrire une nouvelle banque
+## Solution de repli : décrire une banque à la main
+
+L'enregistrement du parcours couvre la quasi-totalité des cas. Cette méthode
+reste utile quand vous voulez lire les écritures **directement à l'écran**
+plutôt que dans un relevé téléchargé, ou piloter finement la pagination.
 
 Tout se passe dans `config/banks.yaml` — aucun code à écrire.
 
@@ -216,6 +396,9 @@ le connecteur poursuit sans attendre.
 - **Aucun identifiant dans le dépôt.** Les mots de passe vivent dans le
   trousseau système (`bankextract login`), à défaut dans `.env`, lui-même
   ignoré par git.
+- **Les parcours enregistrés ne contiennent aucun secret.** Mot de passe et
+  code SMS sont remplacés par des marqueurs dans la page elle-même, avant tout
+  enregistrement. Un contrôle automatique le vérifie, et un test le garantit.
 - **Rien ne sort du poste.** Base, exports et relevés restent en local ; aucun
   service tiers n'est appelé.
 - **Les traces ne révèlent rien.** Les identifiants ne sont jamais affichés en
@@ -249,6 +432,13 @@ src/bankextract/
 │   ├── algeria.py      BNA, CPA, BEA, BADR, BDL, SGA, AGB, BNP, Trust, CCP
 │   └── demo.py         Banque fictive des tests
 ├── otp/                manual · sms_gateway · imap · totp · file
+├── recorder/
+│   ├── inject.js       Capteur d'actions injecté dans les pages du portail
+│   ├── record.py       Enregistrement, masquage des secrets, reconnaissance des champs
+│   ├── scenario.py     Format du parcours (JSON lisible et modifiable)
+│   └── replay.py       Rejeu, avec plusieurs sélecteurs candidats par étape
+├── scheduler.py        Récurrences, fenêtres d'extraction, rattrapage
+├── mailer.py           Envoi SMTP des relevés et des exports
 ├── parsers/            Relevés PDF et CSV/Excel déjà téléchargés
 ├── storage/db.py       SQLAlchemy + déduplication par empreinte
 ├── export/writers.py   CSV, Excel (une feuille par compte), OFX
@@ -257,9 +447,10 @@ src/bankextract/
 └── cli.py              Interface en ligne de commande
 ```
 
-**Le choix structurant** : les sélecteurs vivent dans le YAML, pas dans le
-Python. Quand une banque refond son portail — ce qui arrive — la correction est
-une ligne de configuration, pas une modification de code.
+**Le choix structurant** : rien de spécifique à une banque ne vit dans le code
+Python. Un parcours enregistré est un fichier JSON ; une banque décrite à la
+main est une section de YAML. Quand un portail est refondu — ce qui arrive — on
+réenregistre le parcours en cinq minutes, sans toucher au logiciel.
 
 Pour une banque au parcours atypique (clavier virtuel, iframe, canvas), on
 hérite de `GenericPortalConnector` et on ne redéfinit que la méthode concernée ;
@@ -294,14 +485,24 @@ class MaBanqueConnector(GenericPortalConnector):
 ## Tests
 
 ```bash
-pytest                      # 108 tests
-pytest -m "not e2e" -q      # sans le navigateur
+pytest                      # 176 tests
+pytest -m "not e2e" -q      # 155 tests, sans le navigateur (~9 s)
 ```
 
 Les tests de bout en bout tournent contre le faux portail de
-`tests/fixtures/fake_bank/` : connexion, OTP lu automatiquement, pagination sur
-deux pages, téléchargement de PDF, déduplication à la relance. Aucune banque
-réelle n'est sollicitée.
+`tests/fixtures/fake_bank/`, qui reproduit un vrai parcours : identifiants, OTP
+envoyé par « SMS », comptes, écritures paginées, relevés PDF et CSV.
+
+L'enregistreur y est vérifié **sans intervention humaine** : le test pilote la
+page, ce qui produit de vrais événements du navigateur — exactement ceux qu'un
+utilisateur déclencherait. Sont ainsi couverts le cycle complet
+*enregistrer → rejouer → télécharger → analyser*, l'absence de tout mot de
+passe dans le fichier enregistré, le message d'erreur quand un sélecteur est
+devenu obsolète, et le calcul des échéances (dont le 31 d'un mois de 30 jours).
+
+L'envoi de courriel est testé contre un serveur SMTP local : pièces jointes,
+dépassement de taille, échec de connexion. Aucune banque réelle n'est
+sollicitée, aucun message ne part sur Internet.
 
 ---
 
@@ -313,5 +514,13 @@ réelle n'est sollicitée.
   Sur ces banques, utilisez `--headed` et résolvez le CAPTCHA à la main, ou
   demandez un accès par fichier à votre banque.
 - **Un portail peut changer sans préavis.** C'est la contrepartie de l'absence
-  d'API : prévoyez de revérifier les sélecteurs après une refonte. Les captures
-  d'écran d'erreur sont là pour rendre le diagnostic immédiat.
+  d'API. Les sélecteurs multiples absorbent les petits remaniements ; après une
+  refonte complète, il faut réenregistrer le parcours — cinq minutes. Le message
+  d'erreur nomme l'étape fautive et une capture d'écran est déposée.
+- **Le parcours enregistré est figé dans son chemin.** Si vous téléchargez le
+  relevé d'un seul compte, seul celui-là sera récupéré. Pour plusieurs comptes,
+  enregistrez un parcours par compte (`bna_courant`, `bna_devises`) : chacun a
+  sa propre configuration et son propre numéro de compte.
+- **Une fenêtre de navigateur doit pouvoir s'ouvrir pour l'enregistrement.** Sur
+  un serveur sans écran, enregistrez le parcours depuis un poste de bureau puis
+  copiez le fichier `scenarios/*.json` — le rejeu, lui, tourne sans écran.

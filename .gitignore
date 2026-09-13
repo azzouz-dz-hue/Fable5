@@ -14,6 +14,10 @@ secrets.yaml
 config/*.local.yaml
 *.key
 
+# Parcours enregistrés : propres à chaque poste, et décrivant vos portails
+scenarios/
+scheduler-state.json
+
 # Données extraites
 data/
 downloads/

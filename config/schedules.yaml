@@ -1,0 +1,78 @@
+# ---------------------------------------------------------------------------
+# Extractions programmées et envoi des relevés par courriel.
+#
+# Ce fichier ne contient AUCUN mot de passe : celui du serveur d'envoi est lu
+# dans la variable d'environnement nommée par « password_env » (voir .env).
+#
+#   bankextract schedules        → prochaines échéances
+#   bankextract scheduler --once → exécute ce qui est échu (à appeler par cron)
+#   bankextract mail-test vous@exemple.dz → vérifie la configuration SMTP
+# ---------------------------------------------------------------------------
+
+smtp:
+  host: smtp.gmail.com          # ex. smtp.office365.com, mail.votre-domaine.dz
+  port: 587
+  username: comptabilite@medicomedline.com
+  password_env: SMTP_PASSWORD   # le mot de passe reste dans .env
+  use_tls: true                 # STARTTLS, port 587
+  use_ssl: false                # SSL direct, port 465 (alors use_tls: false)
+  sender: comptabilite@medicomedline.com
+  sender_name: BankExtract
+  max_attachment_mb: 20
+
+schedules:
+
+  # -------------------------------------------------------------------------
+  # Relevé mensuel : le 1er de chaque mois, sur le mois écoulé.
+  # -------------------------------------------------------------------------
+  - name: releve-mensuel
+    enabled: false
+    banks: [bna]                # vide = toutes les banques actives
+    period: mois_precedent      # depuis_derniere_execution | derniers_jours
+                                # mois_en_cours | mois_precedent
+    recurrence:
+      frequency: mensuel        # quotidien | hebdomadaire | mensuel | intervalle
+      day_of_month: 1
+      at: "06:00"
+    mail:
+      enabled: true
+      to:
+        - comptabilite@medicomedline.com
+      cc: []
+      subject: "Relevés bancaires — {banque} — {date}"
+      attach_statements: true   # les PDF/CSV téléchargés depuis la banque
+      attach_exports: true      # les fichiers CSV et Excel normalisés
+      send_on_error: true       # prévenir aussi quand l'extraction échoue
+
+  # -------------------------------------------------------------------------
+  # Suivi quotidien : chaque matin, les écritures depuis la dernière exécution.
+  # -------------------------------------------------------------------------
+  - name: suivi-quotidien
+    enabled: false
+    banks: []
+    period: depuis_derniere_execution
+    days: 15                    # profondeur de rattrapage à la première exécution
+    recurrence:
+      frequency: quotidien
+      at: "07:00"
+    mail:
+      enabled: false            # alimente la base sans envoyer de courriel
+
+  # -------------------------------------------------------------------------
+  # Point hebdomadaire du lundi, sur les 7 derniers jours.
+  # -------------------------------------------------------------------------
+  - name: point-hebdomadaire
+    enabled: false
+    banks: []
+    period: derniers_jours
+    days: 7
+    recurrence:
+      frequency: hebdomadaire
+      day_of_week: 0            # 0 = lundi … 6 = dimanche
+      at: "08:00"
+    mail:
+      enabled: true
+      to:
+        - direction@medicomedline.com
+      attach_statements: false
+      attach_exports: true

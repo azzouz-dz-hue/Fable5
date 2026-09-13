@@ -265,17 +265,33 @@ class FakeBankHandler(BaseHTTPRequestHandler):
             f"""<tr>
   <td class="per">{p.strftime('%d/%m/%Y')}</td>
   <td><a class="dl" href="/download/releve-{number}-{p:%Y%m}.pdf">Télécharger</a></td>
+  <td><a class="dl-csv" href="/download/releve-{number}-{p:%Y%m}.csv">Export CSV</a></td>
 </tr>"""
             for p in periods
         )
         self._html(f'<h1>Relevés</h1><table class="statements"><tbody>{rows}</tbody></table>')
 
     def _download(self, filename: str) -> None:
+        if filename.endswith(".csv"):
+            return self._send(
+                _statement_csv(filename),
+                content_type="text/csv; charset=utf-8",
+                extra_headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
         self._send(
             _PDF_BYTES,
             content_type="application/pdf",
             extra_headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
+
+
+def _statement_csv(filename: str) -> bytes:
+    """Relevé CSV aux conventions francophones : point-virgule, virgule décimale."""
+    number = filename.removeprefix("releve-").split("-")[0]
+    lignes = ["Date opération;Date valeur;Libellé;Débit;Crédit;Solde;Référence"]
+    for op in OPERATIONS.get(number, []):
+        lignes.append(";".join(op))
+    return ("\n".join(lignes) + "\n").encode("utf-8-sig")
 
 
 def start_fake_bank(otp_file: Path, port: int = 0) -> tuple[ThreadingHTTPServer, str]:
