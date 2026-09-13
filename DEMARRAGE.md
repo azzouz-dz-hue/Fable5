@@ -22,12 +22,20 @@ Si Python manque, il vous proposera de l'installer. Acceptez, **fermez la
 fenêtre**, rouvrez PowerShell et relancez la même ligne.
 
 > **Autre méthode — le fichier .exe.** Si vous préférez ne rien installer :
-> allez sur la page du dépôt, onglet **Actions**, ouvrez la dernière exécution
-> « Exécutable Windows », et téléchargez `BankExtract-Windows` en bas de page.
-> Décompressez le dossier où vous voulez, puis ouvrez une invite de commandes
-> dedans. Remplacez ensuite `bankextract` par `bankextract.exe` dans toutes les
-> commandes ci-dessous, et lancez d'abord `bankextract.exe setup` (il
-> télécharge le navigateur, environ 150 Mo).
+>
+> 1. ouvrez <https://github.com/azzouz-dz-hue/Fable5/actions/workflows/build-windows.yml> ;
+> 2. cliquez sur l'exécution la plus récente marquée d'une coche verte ;
+> 3. tout en bas, section **Artifacts**, téléchargez `BankExtract-Windows`
+>    (environ 100 Mo — il faut être connecté à GitHub) ;
+> 4. décompressez le dossier où vous voulez, puis ouvrez une invite de
+>    commandes dedans (clic droit dans le dossier → *Ouvrir dans le Terminal*).
+>
+> Lancez d'abord `bankextract.exe setup` : il télécharge le navigateur, environ
+> 150 Mo, une seule fois. Remplacez ensuite `bankextract` par `bankextract.exe`
+> dans toutes les commandes ci-dessous.
+>
+> Ces archives sont conservées 90 jours. Une nouvelle est produite à chaque
+> modification du logiciel.
 
 ---
 
