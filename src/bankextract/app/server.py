@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from ..browser import browser_installed
 from ..config import DEFAULT_CONFIG_PATH, BankConfig, Settings, load_settings, local_overlay_path
 from ..connectors import build_connector
+from ..install import installer_navigateur
 from ..otp import available_providers
 from ..pipeline import run_banks
 from ..secrets import Credentials, get_credentials, store_credentials
@@ -95,7 +96,13 @@ def creer_application(
         operation = executeur.operation_visible()
 
         return {
-            "banques": [_decrire_banque(nom, cfg, courant) for nom, cfg in courant.banks.items()],
+            # Une seule règle : on montre ce qui est actif. Les banques d'exemple
+            # du modèle sont livrées inactives, et masquer revient à désactiver.
+            "banques": [
+                _decrire_banque(nom, cfg, courant)
+                for nom, cfg in courant.banks.items()
+                if cfg.enabled
+            ],
             "operation": operation.en_dict() if operation else None,
             "occupe": executeur.occupe,
             "totaux": _totaux_lisibles(base),
@@ -138,11 +145,21 @@ def creer_application(
     @application.delete("/api/banques/{cle}")
     def supprimer_banque(cle: str) -> dict:
         surcouche = _lire_surcouche(config_path)
-        if cle not in surcouche.get("banks", {}):
-            raise HTTPException(404, f"Banque « {cle} » introuvable dans vos réglages.")
-        del surcouche["banks"][cle]
-        _ecrire_surcouche(config_path, surcouche)
-        return {"message": f"Banque « {cle} » retirée."}
+        banques = surcouche.setdefault("banks", {})
+
+        if cle in banques:
+            del banques[cle]
+            _ecrire_surcouche(config_path, surcouche)
+            return {"message": f"Banque « {cle} » retirée."}
+
+        # Banque venant du modèle livré : on ne peut pas l'effacer d'un fichier
+        # qui ne nous appartient pas, on la masque dans nos propres réglages.
+        if cle in lire_settings().banks:
+            banques[cle] = {**banques.get(cle, {}), "enabled": False}
+            _ecrire_surcouche(config_path, surcouche)
+            return {"message": f"Banque « {cle} » masquée."}
+
+        raise HTTPException(404, f"Banque « {cle} » introuvable.")
 
     @application.post("/api/identifiants")
     def deposer_identifiants(identifiants: Identifiants) -> dict:
@@ -168,29 +185,13 @@ def creer_application(
         courant = lire_settings()
 
         def travail(operation: Operation) -> str:
-            import subprocess
-            import sys
-
             courant.paths.ensure()
             if browser_installed(courant.browser):
                 return "Le navigateur est déjà installé."
 
             operation.lignes.append("Téléchargement du navigateur (environ 150 Mo)…")
             operation.lignes.append("Cela peut prendre plusieurs minutes.")
-            issue = subprocess.run(
-                [sys.executable, "-m", "playwright", "install", "chromium"],
-                capture_output=True,
-                text=True,
-                timeout=1800,
-            )
-            for ligne in (issue.stdout or "").splitlines()[-12:]:
-                operation.lignes.append(ligne)
-            if issue.returncode != 0:
-                raise RuntimeError(
-                    "Téléchargement impossible. Vérifiez votre connexion, puis réessayez. "
-                    + (issue.stderr or "").strip()[:300]
-                )
-            return "Navigateur installé. Le poste est prêt."
+            return installer_navigateur(journal=operation.lignes.append)
 
         return _lancer(executeur, "Préparation du poste", travail)
 

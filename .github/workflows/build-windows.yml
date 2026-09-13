@@ -113,6 +113,21 @@ jobs:
           if ($connecteurs -notmatch "scenario") { throw "registre des connecteurs incomplet" }
           Write-Host "Registre des connecteurs accessible"
 
+      # Ce bouton a deja echoue une fois en production : depuis l'executable,
+      # « python -m playwright » n'existe pas. Le telechargement reel est donc
+      # rejoue ici a chaque compilation.
+      - name: Vérifier que le navigateur s'installe depuis l'exécutable
+        shell: pwsh
+        run: |
+          $sortie = & "dist\bankextract.exe" setup 2>&1 | Out-String
+          Write-Host $sortie
+          if ($LASTEXITCODE -ne 0) { throw "bankextract.exe setup a echoue" }
+          if ($sortie -match "No such option") {
+            throw "l'executable s'appelle lui-meme au lieu d'appeler le pilote Playwright"
+          }
+          if ($sortie -notmatch "navigateur") { throw "sortie inattendue de setup" }
+          Write-Host "Le navigateur s'installe correctement depuis l'executable"
+
       # C'est le chemin du double-clic : l'interface doit reellement s'ouvrir.
       - name: Vérifier que l'interface démarre
         shell: pwsh

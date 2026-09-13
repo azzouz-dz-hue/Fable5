@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import getpass
 import logging
-import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from rich.table import Table
 
 from .config import DEFAULT_CONFIG_PATH, load_settings
 from .connectors import available_connectors, build_connector
+from .install import InstallationNavigateurError, installer_navigateur
 from .normalize import format_amount
 from .otp import available_providers
 from .pipeline import export_database, run_banks
@@ -356,8 +356,6 @@ def setup(
     À lancer une seule fois après l'installation. Le téléchargement du
     navigateur pèse environ 150 Mo.
     """
-    import subprocess
-
     console.print("[bold]Préparation du poste[/bold]\n")
 
     settings = load_settings(config)
@@ -372,21 +370,13 @@ def setup(
     else:
         console.print("  [dim]…[/dim] téléchargement du navigateur (environ 150 Mo, patientez)")
         try:
-            issue = subprocess.run(
-                [sys.executable, "-m", "playwright", "install", "chromium"],
-                capture_output=True,
-                text=True,
-                timeout=900,
-            )
-        except Exception as exc:
-            console.print(f"  [red]✗[/red] téléchargement impossible : {exc}")
-            raise typer.Exit(code=1) from exc
-        if issue.returncode != 0:
-            console.print(f"  [red]✗[/red] {issue.stderr.strip()[:400]}")
+            installer_navigateur(journal=lambda ligne: console.print(f"    [dim]{ligne}[/dim]"))
+        except InstallationNavigateurError as exc:
+            console.print(f"  [red]✗[/red] {exc}")
             console.print(
                 "\n  Vérifiez votre connexion, puis relancez [cyan]bankextract setup[/cyan]."
             )
-            raise typer.Exit(code=1)
+            raise typer.Exit(code=1) from exc
         console.print("  [green]✓[/green] navigateur installé")
 
     if not Path(config).exists():

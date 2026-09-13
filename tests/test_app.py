@@ -287,3 +287,73 @@ def test_detection_parcourt_le_dossier_des_navigateurs(tmp_path, monkeypatch):
     chrome.write_bytes(b"")
 
     assert browser_installed() is True
+
+
+# ---------------------------------------------------------------- banques du modèle
+
+
+@pytest.fixture
+def config_avec_modele(tmp_path):
+    """Modèle livré : des banques d'exemple, toutes désactivées."""
+    chemin = tmp_path / "banks.yaml"
+    chemin.write_text(
+        yaml.safe_dump(
+            {
+                "banks": {
+                    "bna": {"connector": "bna", "enabled": False},
+                    "cpa": {"connector": "cpa", "enabled": False},
+                    "active": {"connector": "generic", "enabled": True},
+                },
+                "paths": {"database_url": f"sqlite:///{tmp_path}/t.db"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return chemin
+
+
+def test_les_exemples_du_modele_n_encombrent_pas_la_liste(config_avec_modele):
+    """Sept banques d'exemple affichées noieraient celles de l'utilisateur."""
+    client = TestClient(creer_application(config_avec_modele))
+
+    cles = [b["cle"] for b in client.get("/api/etat").json()["banques"]]
+
+    assert "bna" not in cles and "cpa" not in cles
+    assert cles == ["active"], "seules les banques actives restent visibles"
+
+
+def test_une_banque_du_modele_peut_etre_masquee(config_avec_modele):
+    """On ne peut pas l'effacer d'un fichier qui ne nous appartient pas."""
+    client = TestClient(creer_application(config_avec_modele))
+
+    reponse = client.delete("/api/banques/active")
+
+    assert reponse.status_code == 200
+    assert "masquée" in reponse.json()["message"]
+    assert client.get("/api/etat").json()["banques"] == []
+
+
+def test_banque_vraiment_inexistante(config_avec_modele):
+    client = TestClient(creer_application(config_avec_modele))
+
+    assert client.delete("/api/banques/fantome").status_code == 404
+
+
+def test_banque_ajoutee_puis_retiree_disparait(config_avec_modele):
+    client = TestClient(creer_application(config_avec_modele))
+    client.post(
+        "/api/banques",
+        json={
+            "nom": "natixis",
+            "libelle": "NATIXIS - MM",
+            "url": "https://ebanking.algerie.natixis.com/ebanking/index.ebk",
+            "numero_compte": "00167 7764082001 45",
+            "devise": "DZD",
+            "source_otp": "manual",
+            "historique_jours": 90,
+        },
+    )
+
+    assert "natixis" in [b["cle"] for b in client.get("/api/etat").json()["banques"]]
+    assert "retirée" in client.delete("/api/banques/natixis").json()["message"]
+    assert "natixis" not in [b["cle"] for b in client.get("/api/etat").json()["banques"]]
