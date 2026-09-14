@@ -257,9 +257,9 @@ class ScenarioConnector(BankConnector):
         elif step.action is ActionType.WAIT:
             session.page.wait_for_timeout(int(value or 1000))
         elif step.action is ActionType.CLICK:
-            target.click()
+            self._cliquer(target)
         elif step.action is ActionType.DOWNLOAD:
-            return session.download_to(lambda: target.click(), destination)
+            return session.download_to(lambda: self._cliquer(target), destination)
 
         session.page.wait_for_load_state("domcontentloaded")
         return None
@@ -295,6 +295,28 @@ class ScenarioConnector(BankConnector):
                     f"« {step.key_template} » ne correspond plus"
                 ) from exc
             touche.click()
+
+    def _cliquer(self, element) -> None:
+        """Clique, en insistant si l'élément se dérobe.
+
+        Trois tentatives de plus en plus directes : le clic ordinaire, qui
+        respecte la visibilité et les recouvrements ; le clic forcé, qui passe
+        outre ; puis le déclenchement depuis la page elle-même, qui aboutit même
+        sur un lien resté caché dans un menu que rien n'a su déplier.
+        """
+        try:
+            element.click()
+            return
+        except Exception as exc:
+            logger.info("     ↳ clic ordinaire refusé (%s) — on insiste", type(exc).__name__)
+
+        try:
+            element.click(force=True)
+            return
+        except Exception:
+            logger.info("     ↳ clic forcé refusé — déclenchement depuis la page")
+
+        element.evaluate("cible => cible.click()")
 
     def _resolve(self, session: BrowserSession, step: Step):
         """Essaie les sélecteurs candidats dans l'ordre et renvoie le premier qui répond."""

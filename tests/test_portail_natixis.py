@@ -1,0 +1,189 @@
+"""Chaîne complète contre un portail calqué sur NATIXIS Algérie.
+
+Ce portail reproduit les particularités relevées dans les journaux d'un essai
+réel, celles-là mêmes qui ont fait échouer les premières tentatives :
+
+- un sous-menu qui ne s'ouvre qu'au clic sur son entrée parente, alors que
+  l'enregistreur ne capte pas le geste d'ouverture ;
+- une période choisie dans un calendrier plutôt que tapée au clavier ;
+- une connexion en deux temps, avec redirection vers la liste des comptes.
+"""
+
+import sys
+from datetime import date
+from pathlib import Path
+
+import pytest
+from conftest import CHROMIUM
+
+from bankextract.config import BankConfig, OtpConfig
+from bankextract.recorder import ScenarioConnector, record_scenario
+from bankextract.recorder.scenario import TOKEN_PASSWORD, ActionType
+
+sys.path.append(str(Path(__file__).parent / "fixtures" / "portail_natixis"))
+from portail import COMPTE, IDENTIFIANT, MOT_DE_PASSE, demarrer_portail  # noqa: E402
+
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(CHROMIUM is None, reason="Chromium introuvable"),
+]
+
+
+@pytest.fixture
+def portail():
+    serveur, url = demarrer_portail()
+    try:
+        yield url
+    finally:
+        serveur.shutdown()
+        serveur.server_close()
+
+
+def _parcours(page):
+    """La suite de gestes relevée dans le journal d'un essai réel."""
+    page.fill("#login", IDENTIFIANT)
+    page.fill("#mdpAffiche", MOT_DE_PASSE)
+    page.click("input[type=submit]")
+    page.wait_for_selector("#menuPrincipal")
+    page.click("#entreeComptes")
+    page.click("#menuPrincipal > li:nth-of-type(2) > ul > li:nth-of-type(3) > a")
+    page.wait_for_selector("#formatPdf")
+    page.click("#formatPdf")
+    page.click("#formatCsv")
+    page.select_option("#choixFormat", "csv")
+    page.click("#ouvrirCalendrier")
+    page.click("table.calendrier td:nth-of-type(1)")
+    page.click("#validerJour")
+    page.click("text='30'")
+    with page.expect_download():
+        page.click("input[type=submit]")
+    page.wait_for_timeout(300)
+
+
+@pytest.fixture
+def parcours_enregistre(settings, portail, tmp_path):
+    scenario = record_scenario(
+        "natixis", portail, settings.browser, label="NATIXIS - MM",
+        headless=True, driver=_parcours,
+    )
+    return scenario, scenario.save(tmp_path / "scenarios" / "natixis.json")
+
+
+@pytest.fixture
+def identifiants(monkeypatch):
+    monkeypatch.setenv("BANKEXTRACT_NATIXIS_USERNAME", IDENTIFIANT)
+    monkeypatch.setenv("BANKEXTRACT_NATIXIS_PASSWORD", MOT_DE_PASSE)
+
+
+def _rejouer(settings, chemin):
+    connecteur = ScenarioConnector(
+        config=BankConfig(
+            connector="scenario",
+            label="NATIXIS - MM",
+            history_days=400,
+            options={"scenario_path": str(chemin), "account_number": COMPTE},
+            otp=OtpConfig(provider="manual"),
+        ),
+        settings=settings,
+    )
+    connecteur.name = "natixis"
+    return connecteur.run(start=date(2026, 1, 1), end=date(2026, 12, 31))
+
+
+def test_le_parcours_complet_est_capte(parcours_enregistre):
+    scenario, _ = parcours_enregistre
+
+    assert len(scenario.downloads) == 1, "le téléchargement doit être reconnu"
+    assert any(step.value == TOKEN_PASSWORD for step in scenario.steps)
+    assert any(step.action is ActionType.SELECT for step in scenario.steps), "le choix du format"
+
+
+def test_aucun_secret_sur_le_disque(parcours_enregistre):
+    scenario, chemin = parcours_enregistre
+
+    assert MOT_DE_PASSE not in chemin.read_text(encoding="utf-8")
+    assert scenario.contains_secret_values() == []
+
+
+def test_le_rejeu_va_jusqu_au_releve(settings, parcours_enregistre, identifiants):
+    """Le cas qui bloquait : le sous-menu doit être rouvert sans qu'on l'ait enregistré."""
+    _, chemin = parcours_enregistre
+
+    resultat = _rejouer(settings, chemin)
+
+    assert resultat.errors == [], resultat.errors
+    assert len(resultat.files) == 1
+    assert resultat.files[0].path.exists()
+
+
+def test_les_ecritures_sont_lues(settings, parcours_enregistre, identifiants):
+    _, chemin = parcours_enregistre
+
+    resultat = _rejouer(settings, chemin)
+
+    assert len(resultat.transactions) == 4
+    par_libelle = {t.label: t for t in resultat.transactions}
+    assert par_libelle["VIR RECU CLIENT SPA PHARMA"].amount > 0
+    assert par_libelle["FRAIS TENUE DE COMPTE"].amount < 0
+
+
+def test_le_sous_menu_est_rouvert_meme_sans_geste_enregistre(
+    settings, portail, tmp_path, identifiants
+):
+    """Sans l'ouverture du menu, le lien reste invisible et le rejeu échoue.
+
+    On retire volontairement du parcours le clic qui déploie le menu, pour
+    reproduire un enregistrement où l'utilisateur l'avait ouvert d'un survol.
+    """
+    scenario = record_scenario(
+        "natixis", portail, settings.browser, label="NATIXIS - MM",
+        headless=True, driver=_parcours,
+    )
+    scenario.steps = [
+        step for step in scenario.steps if "Mes comptes" not in (step.label or "")
+    ]
+    chemin = scenario.save(tmp_path / "sans-ouverture.json")
+
+    resultat = _rejouer(settings, chemin)
+
+    assert resultat.errors == [], resultat.errors
+    assert len(resultat.transactions) == 4
+
+
+def test_relance_sans_doublon(settings, parcours_enregistre, identifiants):
+    from bankextract.storage import Database
+
+    _, chemin = parcours_enregistre
+    base = Database(settings.paths.database_url)
+
+    premier = base.save_result(_rejouer(settings, chemin))
+    second = base.save_result(_rejouer(settings, chemin))
+
+    assert premier.new_transactions == 4
+    assert second.new_transactions == 0
+    assert second.duplicate_transactions == 4
+
+
+def test_exports_produits(settings, parcours_enregistre, identifiants):
+    from bankextract.pipeline import export_result
+
+    _, chemin = parcours_enregistre
+    resultat = _rejouer(settings, chemin)
+
+    exports = export_result(resultat, settings)
+
+    assert {chemin.suffix for chemin in exports} == {".csv", ".xlsx"}
+    assert all(export.exists() and export.stat().st_size > 0 for export in exports)
+
+
+def test_mot_de_passe_refuse_signale_clairement(settings, parcours_enregistre, monkeypatch):
+    monkeypatch.setenv("BANKEXTRACT_NATIXIS_USERNAME", IDENTIFIANT)
+    monkeypatch.setenv("BANKEXTRACT_NATIXIS_PASSWORD", "mauvais")
+    _, chemin = parcours_enregistre
+
+    resultat = _rejouer(settings, chemin)
+
+    assert not resultat.ok
+    message = " ".join(resultat.errors)
+    assert "introuvable" in message
+    assert "page affichée" in message, "l'adresse montre qu'on est resté sur la connexion"

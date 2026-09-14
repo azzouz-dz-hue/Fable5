@@ -73,5 +73,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Les tests instancient volontairement des attributs de classe mutables.
 "tests/*" = ["B011"]
-# Les jeux de données du faux portail sont alignés en colonnes : plus lisibles longs.
+# Les jeux de données et le HTML des faux portails sont alignés en colonnes :
+# les couper les rendrait moins lisibles, pas plus.
 "tests/fixtures/fake_bank/server.py" = ["E501"]
+"tests/fixtures/portail_natixis/portail.py" = ["E501"]
