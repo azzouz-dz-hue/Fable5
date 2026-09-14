@@ -156,6 +156,12 @@
   <section class="carte" id="bloc-operation" hidden>
     <h2 id="operation-titre">Opération</h2>
     <div class="bandeau" id="operation-bandeau"></div>
+    <div class="actions" id="bloc-arret" hidden style="margin-bottom:12px">
+      <button class="principal" onclick="terminer()">J'ai terminé — enregistrer le parcours</button>
+      <span class="aide" style="align-self:center">
+        Cliquez ici une fois le relevé téléchargé dans la fenêtre du navigateur.
+      </span>
+    </div>
     <div id="journal"></div>
   </section>
 
@@ -208,12 +214,41 @@
   </section>
 
   <section class="carte">
+    <h2>Réglages</h2>
+    <form class="grille" id="formulaire-reglages">
+      <div>
+        <label for="r-navigateur">Navigateur à piloter</label>
+        <select id="r-navigateur" name="navigateur">
+          <option value="">Celui fourni avec le logiciel</option>
+          <option value="chrome">Google Chrome</option>
+          <option value="msedge">Microsoft Edge</option>
+        </select>
+        <p class="aide">Chrome doit être installé sur ce poste pour être choisi.</p>
+      </div>
+      <div>
+        <label for="r-interface">Afficher cette page dans</label>
+        <select id="r-interface" name="navigateur_interface">
+          <option value="">Le navigateur par défaut de Windows</option>
+          <option value="chrome">Google Chrome</option>
+          <option value="firefox">Firefox</option>
+          <option value="edge">Microsoft Edge</option>
+        </select>
+        <p class="aide">Prend effet au prochain démarrage.</p>
+      </div>
+      <div class="pleine-largeur actions">
+        <button type="submit">Enregistrer les réglages</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="carte">
     <h2>Comment procéder</h2>
     <ol class="etapes">
       <li>Ajoutez votre banque ci-dessus, avec l'adresse de son site.</li>
       <li>Déposez vos identifiants : ils vont dans le coffre de Windows, jamais dans un fichier.</li>
-      <li>Enregistrez le parcours : une fenêtre s'ouvre, faites votre manipulation habituelle
-          jusqu'au téléchargement du relevé, puis fermez-la.</li>
+      <li>Enregistrez le parcours : une fenêtre de navigateur s'ouvre. Faites-y votre
+          manipulation habituelle jusqu'au téléchargement du relevé, puis cliquez sur
+          « J'ai terminé ».</li>
       <li>Lancez l'extraction : le logiciel refait tout seul ce que vous avez montré.</li>
     </ol>
     <p class="aide" style="margin-top:14px">
@@ -322,6 +357,8 @@ function afficherOperation(operation) {
     bandeau.textContent = operation.erreur || "Échec.";
   }
 
+  $("bloc-arret").hidden = !operation.arretable;
+
   const journal = $("journal");
   const enBas = journal.scrollHeight - journal.scrollTop - journal.clientHeight < 40;
   journal.textContent = operation.lignes.join("\n");
@@ -338,6 +375,12 @@ async function rafraichir() {
     $("t-derniere").textContent = etat.totaux.derniere_extraction || "jamais";
     $("dossier-exports").textContent = etat.dossiers.exports;
     $("bloc-preparation").hidden = etat.navigateur_pret;
+    if (document.activeElement.id !== "r-navigateur") {
+      $("r-navigateur").value = etat.reglages.navigateur;
+    }
+    if (document.activeElement.id !== "r-interface") {
+      $("r-interface").value = etat.reglages.navigateur_interface;
+    }
     $("bouton-preparer").disabled = occupe;
     $("bouton-diagnostic").disabled = occupe;
     navigateurPret = etat.navigateur_pret;
@@ -345,6 +388,16 @@ async function rafraichir() {
     afficherOperation(etat.operation);
   } catch (erreur) {
     console.error(erreur);
+  }
+}
+
+async function terminer() {
+  try {
+    const reponse = await appeler("/api/operations/terminer", { method: "POST" });
+    await rafraichir();
+    console.log(reponse.message);
+  } catch (erreur) {
+    alert(erreur.message);
   }
 }
 
@@ -407,6 +460,20 @@ $("formulaire-identifiants").addEventListener("submit", async (evenement) => {
   try {
     const reponse = await appeler("/api/identifiants", {
       method: "POST", body: JSON.stringify(corps),
+    });
+    await rafraichir();
+    alert(reponse.message);
+  } catch (erreur) {
+    alert(erreur.message);
+  }
+});
+
+$("formulaire-reglages").addEventListener("submit", async (evenement) => {
+  evenement.preventDefault();
+  const donnees = Object.fromEntries(new FormData(evenement.target));
+  try {
+    const reponse = await appeler("/api/reglages", {
+      method: "POST", body: JSON.stringify(donnees),
     });
     await rafraichir();
     alert(reponse.message);

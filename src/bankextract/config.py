@@ -53,6 +53,20 @@ class BrowserConfig(BaseModel):
     executable_path: str | None = Field(
         default=None, description="Chemin d'un Chromium déjà installé"
     )
+    channel: str | None = Field(
+        default=None,
+        description=(
+            "Navigateur à piloter : « chrome » ou « msedge » pour celui déjà "
+            "installé sur le poste, vide pour le Chromium fourni."
+        ),
+    )
+    interface_browser: str | None = Field(
+        default=None,
+        description=(
+            "Navigateur où ouvrir l'interface : « chrome », « firefox », « edge »… "
+            "vide pour celui par défaut du système."
+        ),
+    )
 
 
 class PathsConfig(BaseModel):

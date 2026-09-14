@@ -179,6 +179,8 @@ def browser_session(config: BrowserConfig, bank: str) -> Iterator[BrowserSession
     }
     if config.executable_path:
         launch_args["executable_path"] = config.executable_path
+    if config.channel:
+        launch_args["channel"] = config.channel
 
     with sync_playwright() as playwright:
         try:
@@ -203,6 +205,8 @@ def ephemeral_browser(config: BrowserConfig, bank: str = "test") -> Iterator[Bro
     launch_args: dict = {"headless": config.headless, "slow_mo": config.slow_mo_ms}
     if config.executable_path:
         launch_args["executable_path"] = config.executable_path
+    if config.channel:
+        launch_args["channel"] = config.channel
 
     with sync_playwright() as playwright:
         try:

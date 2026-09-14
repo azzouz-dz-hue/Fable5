@@ -43,6 +43,7 @@ class Operation:
     lignes: deque[str] = field(default_factory=lambda: deque(maxlen=MAX_LIGNES))
     resume: str = ""
     erreur: str = ""
+    arretable: bool = False
 
     @property
     def duree_secondes(self) -> float:
@@ -58,6 +59,7 @@ class Operation:
             "lignes": list(self.lignes),
             "resume": self.resume,
             "erreur": self.erreur,
+            "arretable": self.arretable and self.etat is Etat.EN_COURS,
         }
 
 
@@ -96,7 +98,9 @@ class Executeur:
         with self._verrou:
             return self._courante or self._derniere
 
-    def lancer(self, nom: str, travail: Callable[[Operation], str]) -> Operation:
+    def lancer(
+        self, nom: str, travail: Callable[[Operation], str], arretable: bool = False
+    ) -> Operation:
         """Démarre `travail` en arrière-plan. Lève si une opération tourne déjà."""
         with self._verrou:
             if self._courante is not None:
@@ -104,7 +108,9 @@ class Executeur:
                     f"« {self._courante.nom} » est déjà en cours. "
                     "Attendez qu'elle se termine."
                 )
-            operation = Operation(identifiant=uuid.uuid4().hex[:8], nom=nom)
+            operation = Operation(
+                identifiant=uuid.uuid4().hex[:8], nom=nom, arretable=arretable
+            )
             self._courante = operation
 
         threading.Thread(

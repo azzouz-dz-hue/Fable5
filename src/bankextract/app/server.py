@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,17 @@ class DescriptionBanque(BaseModel):
         return "".join(c if c.isalnum() else "_" for c in sans_accent).strip("_") or "banque"
 
 
+class Reglages(BaseModel):
+    """Choix du navigateur, côté pilotage comme côté affichage."""
+
+    navigateur: str = Field(
+        default="", description="« chrome », « msedge », ou vide pour celui fourni."
+    )
+    navigateur_interface: str = Field(
+        default="", description="Navigateur où ouvrir l'interface ; vide = celui du système."
+    )
+
+
 class Identifiants(BaseModel):
     banque: str
     utilisateur: str = Field(min_length=1)
@@ -66,6 +78,8 @@ def creer_application(
     """Construit l'interface. `settings` sert aux tests."""
     config_path = Path(config_path)
     executeur = Executeur()
+    # Permet de clore l'enregistrement depuis l'interface.
+    arret_enregistrement = threading.Event()
     gabarits = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
     def lire_settings() -> Settings:
@@ -107,6 +121,10 @@ def creer_application(
             "occupe": executeur.occupe,
             "totaux": _totaux_lisibles(base),
             "navigateur_pret": browser_installed(courant.browser),
+            "reglages": {
+                "navigateur": courant.browser.channel or "",
+                "navigateur_interface": courant.browser.interface_browser or "",
+            },
             "dossiers": {
                 "releves": str(courant.paths.downloads_dir.resolve()),
                 "exports": str(courant.paths.exports_dir.resolve()),
@@ -228,16 +246,28 @@ def creer_application(
         if not url:
             raise HTTPException(400, "Renseignez d'abord l'adresse du portail de la banque.")
 
+        arret_enregistrement.clear()
+
         def travail(operation: Operation) -> str:
             from ..recorder import record_scenario
             from ..recorder.record import annotate_scenario
 
-            operation.lignes.append(f"Ouverture de {url}")
+            operation.lignes.append(f"Une fenêtre de navigateur s'ouvre sur {url}")
             operation.lignes.append(
-                "Connectez-vous, téléchargez un relevé, puis FERMEZ la fenêtre."
+                "Faites vos actions DANS CETTE FENÊTRE : connectez-vous, "
+                "puis téléchargez un relevé."
+            )
+            operation.lignes.append(
+                "Quand c'est fait, cliquez sur « J'ai terminé » ci-dessus "
+                "(ou fermez la fenêtre)."
             )
             scenario = record_scenario(
-                cle, url, courant.browser, label=config.display_name, max_seconds=1800
+                cle,
+                url,
+                courant.browser,
+                label=config.display_name,
+                max_seconds=1800,
+                arret=arret_enregistrement,
             )
             if len(scenario.steps) <= 1:
                 raise RuntimeError(
@@ -258,7 +288,12 @@ def creer_application(
                 )
             return f"Parcours enregistré ({scenario.summary()}) dans {chemin}"
 
-        return _lancer(executeur, f"Enregistrement du parcours — {config.display_name}", travail)
+        return _lancer(
+            executeur,
+            f"Enregistrement du parcours — {config.display_name}",
+            travail,
+            arretable=True,
+        )
 
     @application.post("/api/operations/extraire/{cle}")
     def demarrer_extraction(cle: str, jours: int = 90) -> dict:
@@ -295,6 +330,25 @@ def creer_application(
 
         return _lancer(executeur, f"Essai visible — {config.display_name}", travail)
 
+    @application.post("/api/operations/terminer")
+    def terminer_enregistrement() -> dict:
+        """Clôt l'enregistrement en cours, sans attendre la fermeture de la fenêtre."""
+        operation = executeur.operation_visible()
+        if operation is None or not operation.arretable:
+            raise HTTPException(409, "Aucun enregistrement en cours.")
+        arret_enregistrement.set()
+        operation.lignes.append("Arrêt demandé — enregistrement du parcours…")
+        return {"message": "Enregistrement en cours de clôture."}
+
+    @application.post("/api/reglages")
+    def enregistrer_reglages(reglages: Reglages) -> dict:
+        surcouche = _lire_surcouche(config_path)
+        navigateur = surcouche.setdefault("browser", {})
+        navigateur["channel"] = reglages.navigateur or None
+        navigateur["interface_browser"] = reglages.navigateur_interface or None
+        _ecrire_surcouche(config_path, surcouche)
+        return {"message": "Réglages enregistrés."}
+
     @application.get("/api/sante")
     def sante() -> dict:
         return {"statut": "ok", "heure": datetime.now().strftime("%H:%M:%S")}
@@ -317,9 +371,9 @@ def _sources_otp_ordonnees() -> list[str]:
     return ["manual"] + [source for source in sources if source != "manual"]
 
 
-def _lancer(executeur: Executeur, nom: str, travail) -> dict:
+def _lancer(executeur: Executeur, nom: str, travail, arretable: bool = False) -> dict:
     try:
-        operation = executeur.lancer(nom, travail)
+        operation = executeur.lancer(nom, travail, arretable=arretable)
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     return {"identifiant": operation.identifiant, "nom": operation.nom}

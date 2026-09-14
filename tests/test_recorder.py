@@ -1,6 +1,8 @@
 """Enregistrement d'un parcours bancaire, puis rejeu automatique."""
 
+import contextlib
 import json
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -489,3 +491,91 @@ def test_pagination_numerotee_n_est_pas_prise_pour_un_clavier():
 
     assert scenario.contains_secret_values() == []
     assert not [s for s in scenario.steps if s.action is ActionType.KEYPAD]
+
+
+# ---------------------------------------------------------------- fin de l'enregistrement
+
+
+def test_arret_demande_depuis_l_interface():
+    """Sans ce signal, l'utilisateur n'aurait aucun moyen de clore l'enregistrement."""
+    import threading
+
+    from bankextract.recorder.record import _attendre_la_fin
+
+    class ContexteFactice:
+        """Un contexte dont la fenêtre reste obstinément ouverte."""
+
+        class Page:
+            def is_closed(self):
+                return False
+
+            def wait_for_timeout(self, _ms):
+                return None
+
+        pages = [Page()]
+
+    arret = threading.Event()
+    arret.set()
+
+    debut = time.monotonic()
+    _attendre_la_fin(ContexteFactice(), arret, max_seconds=30)
+
+    assert time.monotonic() - debut < 2
+
+
+def test_fin_quand_plus_aucune_fenetre():
+    from bankextract.recorder.record import _attendre_la_fin
+
+    class ContexteVide:
+        pages: list = []
+
+    debut = time.monotonic()
+    _attendre_la_fin(ContexteVide(), None, max_seconds=30)
+
+    assert time.monotonic() - debut < 2
+
+
+def test_fin_quand_le_navigateur_a_disparu():
+    """Interroger un contexte fermé lève : c'est aussi une fin d'enregistrement."""
+    from bankextract.recorder.record import _attendre_la_fin
+
+    class ContexteFerme:
+        @property
+        def pages(self):
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    debut = time.monotonic()
+    _attendre_la_fin(ContexteFerme(), None, max_seconds=30)
+
+    assert time.monotonic() - debut < 2
+
+
+@navigateur
+def test_fermeture_de_la_fenetre_detectee(settings, tmp_path):
+    """Le défaut qui a bloqué l'essai : la fermeture passait inaperçue.
+
+    L'attente doit passer par Playwright, et non par un simple « sleep » :
+    c'est ce qui lui laisse traiter ses événements, donc voir la fermeture.
+    """
+    from playwright.sync_api import sync_playwright
+
+    from bankextract.recorder.record import _attendre_la_fin
+
+    with sync_playwright() as playwright:
+        contexte = playwright.chromium.launch_persistent_context(
+            user_data_dir=str(tmp_path / "profil"),
+            headless=True,
+            executable_path=settings.browser.executable_path,
+        )
+        page = contexte.pages[0] if contexte.pages else contexte.new_page()
+        page.goto("about:blank")
+        page.evaluate("setTimeout(() => window.close(), 800)")
+
+        debut = time.monotonic()
+        _attendre_la_fin(contexte, None, max_seconds=25)
+        duree = time.monotonic() - debut
+
+        with contextlib.suppress(Exception):
+            contexte.close()
+
+    assert duree < 10, "la fermeture doit être vue en quelques secondes"

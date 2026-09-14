@@ -371,3 +371,43 @@ def test_diagnostic_sans_navigateur(client, monkeypatch):
 
     assert operation["etat"] == Etat.ECHEC.value
     assert "Préparer le poste" in operation["erreur"]
+
+
+# ---------------------------------------------------------------- fin et réglages
+
+
+def test_terminer_sans_enregistrement(client):
+    assert client.post("/api/operations/terminer").status_code == 409
+
+
+def test_reglages_exposes(client):
+    reglages = client.get("/api/etat").json()["reglages"]
+
+    assert "navigateur" in reglages and "navigateur_interface" in reglages
+
+
+def test_reglages_enregistres(client, config_path):
+    reponse = client.post(
+        "/api/reglages", json={"navigateur": "chrome", "navigateur_interface": "chrome"}
+    )
+
+    assert reponse.status_code == 200
+    settings = load_settings(config_path)
+    assert settings.browser.channel == "chrome"
+    assert settings.browser.interface_browser == "chrome"
+
+
+def test_navigateur_fourni_par_defaut(client, config_path):
+    client.post("/api/reglages", json={"navigateur": "", "navigateur_interface": ""})
+
+    assert load_settings(config_path).browser.channel is None
+
+
+def test_bouton_j_ai_termine_present(client):
+    assert "J'ai terminé" in client.get("/").text
+
+
+def test_formulaire_de_reglages_present(client):
+    page = client.get("/").text
+
+    assert "Navigateur à piloter" in page and "Google Chrome" in page

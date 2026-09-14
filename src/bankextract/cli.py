@@ -350,8 +350,8 @@ def interface(
     from .app import creer_application, port_libre
 
     _setup_logging(verbose)
-    load_settings(config).paths.ensure()
-
+    settings = load_settings(config)
+    settings.paths.ensure()
     port = port or port_libre()
     adresse = f"http://127.0.0.1:{port}"
 
@@ -362,8 +362,23 @@ def interface(
     console.print()
 
     if not sans_navigateur:
+        choisi = settings.browser.interface_browser
+
+        def ouvrir() -> None:
+            """Ouvre l'interface, de préférence dans le navigateur demandé."""
+            if choisi:
+                try:
+                    webbrowser.get(choisi).open(adresse)
+                    return
+                except Exception:
+                    console.print(
+                        f"  [dim]« {choisi} » introuvable — ouverture dans le "
+                        "navigateur par défaut.[/dim]"
+                    )
+            webbrowser.open(adresse)
+
         # Laisse le serveur démarrer avant d'ouvrir la page.
-        threading.Timer(1.2, lambda: webbrowser.open(adresse)).start()
+        threading.Timer(1.2, ouvrir).start()
 
     try:
         uvicorn.run(

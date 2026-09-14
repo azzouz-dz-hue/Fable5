@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -40,6 +41,10 @@ INJECT_SCRIPT = Path(__file__).parent / "inject.js"
 
 #: Indices qu'un champ réclame un code d'authentification forte.
 OTP_HINTS = ("otp", "sms", "code", "token", "authent", "verif", "challenge")
+
+#: Pas de la boucle d'attente : assez court pour que « J'ai terminé » réponde
+#: sans délai perceptible, assez long pour ne rien coûter.
+_PAS_ATTENTE_MS = 400
 
 #: Deux actions identiques rapprochées viennent d'un double événement, pas de
 #: deux gestes : les navigateurs émettent parfois « change » puis « click ».
@@ -125,11 +130,15 @@ def record_scenario(
     auto_detect: bool = True,
     headless: bool = False,
     driver: Callable[[object], None] | None = None,
+    arret: threading.Event | None = None,
 ) -> Scenario:
     """Ouvre le portail et enregistre le parcours jusqu'à fermeture du navigateur.
 
     L'enregistrement s'arrête quand l'utilisateur ferme la fenêtre, ou au bout de
     `max_seconds`.
+
+    `arret` permet de clore l'enregistrement depuis l'interface : l'utilisateur
+    ne doit pas avoir à deviner que fermer la fenêtre met fin à la capture.
 
     `driver` permet d'automatiser le parcours au lieu d'attendre un humain : les
     actions qu'il déclenche produisent de vrais événements DOM, donc le capteur
@@ -165,9 +174,7 @@ def record_scenario(
         if driver is not None:
             driver(page)
         else:
-            deadline = time.monotonic() + max_seconds
-            while time.monotonic() < deadline and context.pages:
-                time.sleep(0.5)
+            _attendre_la_fin(context, arret, max_seconds)
 
         try:
             context.close()
@@ -184,6 +191,39 @@ def record_scenario(
     if auto_detect:
         annotate_scenario(scenario)
     return scenario
+
+
+def _attendre_la_fin(context, arret, max_seconds: int) -> None:
+    """Attend que l'utilisateur signale la fin de son parcours.
+
+    Trois issues : il clique sur « J'ai terminé », il ferme la fenêtre, ou le
+    délai expire. La fermeture se détecte de trois manières, car aucune n'est
+    fiable seule : l'événement `close` du contexte n'est pas toujours émis, la
+    liste des pages peut rester garnie d'une page fantôme, et interroger un
+    contexte déjà fermé lève une exception au lieu de renvoyer une liste vide.
+    """
+    deadline = time.monotonic() + max_seconds
+
+    while time.monotonic() < deadline:
+        if arret is not None and arret.is_set():
+            logger.info("Arrêt demandé depuis l'interface")
+            return
+
+        try:
+            ouvertes = [page for page in context.pages if not page.is_closed()]
+            if not ouvertes:
+                logger.info("Plus aucune fenêtre ouverte — fin de l'enregistrement")
+                return
+            # Cette attente-ci passe par Playwright, contrairement à un
+            # « sleep » : c'est elle qui lui laisse traiter ses événements, donc
+            # constater la fermeture. Sans cela, la liste des pages resterait
+            # éternellement garnie et l'enregistrement ne s'arrêterait jamais.
+            ouvertes[0].wait_for_timeout(_PAS_ATTENTE_MS)
+        except Exception:
+            logger.info("Navigateur fermé — fin de l'enregistrement")
+            return
+
+    logger.warning("Délai d'enregistrement dépassé (%d minutes)", max_seconds // 60)
 
 
 def _instrument(context, session: RecordingSession) -> None:
