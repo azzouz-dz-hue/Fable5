@@ -341,7 +341,8 @@ def test_selecteur_obsolete_signale_clairement(settings, parcours_enregistre, id
 
     assert not resultat.ok
     message = " ".join(resultat.errors)
-    assert "étape 2" in message and "sélecteur" in message
+    assert "étape 2" in message
+    assert "introuvable" in message, "le message doit nommer ce qui a été constaté"
 
 
 @navigateur
@@ -639,5 +640,37 @@ def test_element_vraiment_absent_reste_une_erreur(settings, tmp_path):
 
     with ephemeral_browser(settings.browser) as session:
         session.goto(PAGE_MENU.as_uri())
-        with pytest.raises(StepFailure, match="aucun sélecteur ne correspond"):
+        with pytest.raises(StepFailure, match="introuvable"):
             connecteur._resolve(session, etape)
+
+
+@navigateur
+def test_le_message_distingue_absent_et_invisible(settings, tmp_path):
+    """Deux causes opposées ne doivent pas produire le même message.
+
+    Un élément absent signale une page inattendue — une connexion qui n'a pas
+    abouti, le plus souvent. Un élément présent mais invisible signale un menu
+    que l'on n'a pas su déplier. Les corriger demande des gestes contraires.
+    """
+    from bankextract.browser import ephemeral_browser
+    from bankextract.recorder.replay import StepFailure
+
+    connecteur = ScenarioConnector(
+        config=BankConfig(
+            connector="scenario", options={"scenario_path": str(tmp_path / "x.json")}
+        ),
+        settings=settings,
+    )
+
+    with ephemeral_browser(settings.browser) as session:
+        session.goto(PAGE_MENU.as_uri())
+        with pytest.raises(StepFailure) as echec:
+            connecteur._resolve(
+                session, Step(action=ActionType.CLICK, selectors=["#vraiment-absent"])
+            )
+        message = str(echec.value)
+        etat_visible = connecteur._etat_de_l_element(session.page, "#resultat")
+
+    assert "absent du document" in message
+    assert "page affichée" in message, "l'adresse aide à voir si la connexion a abouti"
+    assert "visible" in etat_visible

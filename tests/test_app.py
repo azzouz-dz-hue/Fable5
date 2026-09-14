@@ -535,3 +535,46 @@ def test_formulaire_de_programmation_present(client_programmation):
 
     assert "Extractions programmées" in page
     assert "Toutes les semaines" in page and "Vendredi" in page
+
+
+# ---------------------------------------------------------------- diagnostic
+
+
+def test_version_affichee(client):
+    """Sans elle, impossible de savoir si un correctif est en place sur le poste."""
+    etat = client.get("/api/etat").json()
+
+    assert etat["version"]
+    assert "id=\"version\"" in client.get("/").text
+
+
+def test_capture_absente(client):
+    assert client.get("/api/capture").status_code == 404
+    assert client.get("/api/etat").json()["capture"] is False
+
+
+def test_capture_servie(client, tmp_path):
+    captures = tmp_path / "logs" / "screenshots"
+    captures.mkdir(parents=True, exist_ok=True)
+    (captures / "erreur.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    assert client.get("/api/etat").json()["capture"] is True
+    reponse = client.get("/api/capture")
+    assert reponse.status_code == 200
+    assert reponse.headers["content-type"] == "image/png"
+
+
+def test_capture_la_plus_recente(client, tmp_path):
+    import os
+    import time
+
+    captures = tmp_path / "logs" / "screenshots"
+    captures.mkdir(parents=True, exist_ok=True)
+    ancienne = captures / "ancienne.png"
+    ancienne.write_bytes(b"ancienne")
+    time.sleep(0.01)
+    recente = captures / "recente.png"
+    recente.write_bytes(b"recente")
+    os.utime(ancienne, (1, 1))
+
+    assert client.get("/api/capture").content == b"recente"

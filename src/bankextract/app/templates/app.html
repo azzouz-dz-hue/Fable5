@@ -163,6 +163,13 @@
       </span>
     </div>
     <div id="journal"></div>
+    <div id="bloc-capture" hidden style="margin-top:12px">
+      <p class="aide" style="margin-bottom:6px">
+        Capture de l'écran au moment de l'erreur :
+      </p>
+      <img id="capture" alt="Capture d'écran de l'erreur"
+           style="width:100%;border:1px solid var(--bord);border-radius:8px">
+    </div>
   </section>
 
   <section class="carte">
@@ -325,6 +332,11 @@
     </p>
   </section>
 
+
+  <p class="aide" style="text-align:center;margin-top:24px">
+    BankExtract — version <span id="version">…</span>
+  </p>
+
 </div>
 
 <dialog id="boite-identifiants" style="border:1px solid var(--bord);border-radius:10px;padding:20px;background:var(--surface);color:var(--texte);max-width:380px">
@@ -349,6 +361,7 @@ const $ = (id) => document.getElementById(id);
 let banqueCourante = null;
 let occupe = false;
 let navigateurPret = true;
+let captureDisponible = false;
 
 async function appeler(url, options = {}) {
   const reponse = await fetch(url, {
@@ -470,6 +483,14 @@ function afficherOperation(operation) {
     bandeau.textContent = operation.erreur || "Échec.";
   }
 
+  const montrerCapture = operation.etat === "echec" && captureDisponible;
+  $("bloc-capture").hidden = !montrerCapture;
+  if (montrerCapture) {
+    // L'horodatage force le navigateur à recharger l'image plutôt qu'à
+    // ressortir celle du précédent échec.
+    $("capture").src = `/api/capture?t=${operation.identifiant}`;
+  }
+
   $("bloc-arret").hidden = !operation.arretable;
 
   const journal = $("journal");
@@ -497,6 +518,8 @@ async function rafraichir() {
     $("bouton-preparer").disabled = occupe;
     $("bouton-diagnostic").disabled = occupe;
     navigateurPret = etat.navigateur_pret;
+    captureDisponible = etat.capture;
+    $("version").textContent = etat.version;
     afficherBanques(etat.banques);
     afficherProgrammations(etat.programmations, etat.banques);
     afficherOperation(etat.operation);

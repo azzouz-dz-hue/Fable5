@@ -313,16 +313,63 @@ class ScenarioConnector(BankConnector):
         # Deuxième chance : l'élément peut être présent mais caché dans un menu
         # déroulant. L'utilisateur l'avait ouvert d'un survol de souris — un
         # geste que l'enregistreur ne capte pas, puisqu'il n'est pas un clic.
+        logger.info("     ↳ élément introuvable en l'état — tentative d'ouverture des menus")
         for candidate in step.selectors:
             element = self._ouvrir_menu_contenant(scope, candidate)
             if element is not None:
                 logger.info("     ↳ menu déroulant ouvert pour atteindre l'élément")
                 return element
 
-        raise StepFailure(
-            "aucun sélecteur ne correspond — le portail a peut-être changé. "
-            f"Candidats essayés : {', '.join(errors) or 'aucun'}"
+        raise StepFailure(self._expliquer_l_echec(session, scope, step, errors))
+
+    def _expliquer_l_echec(
+        self, session: BrowserSession, scope, step: Step, errors: list[str]
+    ) -> str:
+        """Dit ce qui a réellement été constaté, et non seulement qu'on a échoué.
+
+        La distinction décisive est celle-ci : un élément absent du document
+        signale que la page affichée n'est pas celle attendue — une connexion
+        qui n'a pas abouti, le plus souvent ; un élément présent mais invisible
+        signale un menu que l'on n'a pas su déplier. Les deux demandent des
+        corrections opposées, d'où l'intérêt de les nommer.
+        """
+        constats: list[str] = []
+        for candidate in step.selectors:
+            constats.append(f"« {candidate} » : {self._etat_de_l_element(scope, candidate)}")
+
+        try:
+            page_courante = f"page affichée : {session.page.url}"
+        except Exception:
+            page_courante = "page affichée : inconnue"
+
+        try:
+            titre = session.page.title()
+            if titre:
+                page_courante += f" — « {titre} »"
+        except Exception:
+            pass
+
+        return (
+            "l'élément attendu est introuvable, menus déroulants compris.\n"
+            + "\n".join(f"  {constat}" for constat in constats)
+            + f"\n  {page_courante}"
+            + (f"\n  délais : {', '.join(errors)}" if errors else "")
         )
+
+    def _etat_de_l_element(self, scope, selecteur: str) -> str:
+        """Absent du document, ou présent mais invisible ?"""
+        try:
+            element = scope.wait_for_selector(selecteur, state="attached", timeout=1_000)
+        except Exception:
+            return "absent du document — la page affichée n'est sans doute pas la bonne"
+        if element is None:
+            return "absent du document"
+        try:
+            if element.is_visible():
+                return "présent et visible, mais le clic n'a pas abouti"
+        except Exception:
+            return "présent, état indéterminable"
+        return "présent mais invisible — menu non déplié"
 
     def _ouvrir_menu_contenant(self, scope, selecteur: str):
         """Déplie le menu qui masque l'élément visé, puis le renvoie.

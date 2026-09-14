@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import socket
+import sys
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -17,7 +18,7 @@ from typing import Any
 
 import yaml
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
@@ -179,6 +180,8 @@ def creer_application(
             "occupe": executeur.occupe,
             "totaux": _totaux_lisibles(base),
             "navigateur_pret": browser_installed(courant.browser),
+            "version": _version_lisible(),
+            "capture": _derniere_capture(courant) is not None,
             "programmations": _decrire_programmations(schedules_path, etat_programmation),
             "reglages": {
                 "navigateur": courant.browser.channel or "",
@@ -441,6 +444,14 @@ def creer_application(
         _ecrire_surcouche(config_path, surcouche)
         return {"message": "Réglages enregistrés."}
 
+    @application.get("/api/capture")
+    def derniere_capture():
+        """Sert la dernière capture d'écran d'erreur, pour l'afficher sur place."""
+        chemin = _derniere_capture(lire_settings())
+        if chemin is None:
+            raise HTTPException(404, "Aucune capture disponible.")
+        return FileResponse(chemin, media_type="image/png")
+
     @application.get("/api/sante")
     def sante() -> dict:
         return {"statut": "ok", "heure": datetime.now().strftime("%H:%M:%S")}
@@ -581,6 +592,32 @@ _ENTETE_PROGRAMMATIONS = (
     "# Elles remplacent les exemples du modèle (schedules.yaml).\n"
     "# Ce fichier n'est pas publié : il reste sur ce poste.\n\n"
 )
+
+
+def _version_lisible() -> str:
+    """Version du logiciel, et date de l'exécutable quand il en est un.
+
+    Sans cela, impossible de savoir si un correctif est bien en place sur le
+    poste : deux versions peuvent produire le même message d'erreur.
+    """
+    from .. import __version__
+
+    if not getattr(sys, "frozen", False):
+        return f"{__version__} (sources)"
+    try:
+        compile_le = datetime.fromtimestamp(Path(sys.executable).stat().st_mtime)
+        return f"{__version__} du {compile_le:%d/%m/%Y à %H:%M}"
+    except OSError:
+        return __version__
+
+
+def _derniere_capture(settings: Settings) -> Path | None:
+    """Capture d'écran la plus récente, déposée lors d'un échec."""
+    dossier = settings.paths.logs_dir / "screenshots"
+    if not dossier.is_dir():
+        return None
+    captures = sorted(dossier.glob("*.png"), key=lambda chemin: chemin.stat().st_mtime)
+    return captures[-1] if captures else None
 
 
 def _decrire_programmations(schedules_path: Path, etat: SchedulerState) -> list[dict]:
