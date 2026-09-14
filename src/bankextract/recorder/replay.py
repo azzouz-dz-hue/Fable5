@@ -37,8 +37,8 @@ CANDIDATE_TIMEOUT_MS = 4_000
 #: Ouvrir un menu est immédiat : inutile d'attendre longtemps à chaque essai.
 REVEAL_TIMEOUT_MS = 1_500
 
-#: Profondeur de menus imbriqués explorée pour retrouver le parent à survoler.
-PROFONDEUR_MENU = 4
+#: Attribut posé le temps d'identifier les parents à déplier, puis retiré.
+MARQUEUR_MENU = "data-bankextract-parent"
 
 
 class StepFailure(ScrapingError):
@@ -374,10 +374,15 @@ class ScenarioConnector(BankConnector):
     def _ouvrir_menu_contenant(self, scope, selecteur: str):
         """Déplie le menu qui masque l'élément visé, puis le renvoie.
 
-        Deux mécaniques coexistent dans les portails : les menus ouverts par la
-        pseudo-classe CSS `:hover`, qui exigent un vrai déplacement de souris,
-        et ceux pilotés par script, qui se contentent des événements de survol.
-        Les deux sont tentées, du parent le plus extérieur au plus proche.
+        Les portails ouvrent leurs menus de trois façons : la pseudo-classe CSS
+        `:hover`, qui exige un vrai déplacement de souris ; un script à l'écoute
+        des événements de survol ; ou un clic sur l'entrée parente. Les trois
+        sont tentées sur chaque ancêtre, du plus extérieur au plus proche.
+
+        Les ancêtres sont marqués depuis la page elle-même plutôt que désignés
+        par un axe XPath : la façon dont Playwright enchaîne les sélecteurs
+        relatifs varie, et un enchaînement qui échoue en silence donne
+        l'illusion qu'aucun parent n'existe.
         """
         try:
             element = scope.wait_for_selector(
@@ -388,22 +393,87 @@ class ScenarioConnector(BankConnector):
         if element is None:
             return None
 
-        cible = scope.locator(selecteur).first
-        for niveau in range(PROFONDEUR_MENU, 0, -1):
-            ancetre = cible.locator(f"xpath=ancestor::li[{niveau}]")
-            try:
-                if ancetre.count() == 0:
-                    continue
-                premier = ancetre.first
-                if premier.is_visible():
-                    premier.hover(timeout=REVEAL_TIMEOUT_MS)
-                    if element.is_visible():
-                        return element
-            except Exception:
-                continue
+        niveaux = self._marquer_les_ancetres(element)
+        if not niveaux:
+            logger.info("     ↳ aucun parent à déplier")
+            return None
 
-        # Menus pilotés par script : on remonte la chaîne des parents en
-        # émettant les événements de survol qu'ils attendent.
+        try:
+            # Du plus extérieur au plus proche : ouvrir un sous-menu suppose
+            # d'avoir ouvert celui qui le contient.
+            for niveau in range(niveaux - 1, -1, -1):
+                ancetre = scope.locator(f'[{MARQUEUR_MENU}="{niveau}"]').first
+                for geste in ("survol", "clic"):
+                    if self._tenter(ancetre, geste, niveau) and self._est_visible(element):
+                        logger.info("     ↳ menu ouvert par %s du parent %d", geste, niveau)
+                        return element
+
+            self._emettre_survols(element)
+            if self._est_visible(element):
+                logger.info("     ↳ menu ouvert par les événements de survol")
+                return element
+        finally:
+            self._effacer_les_marques(scope)
+
+        logger.info("     ↳ aucun geste n'a déplié le menu (%d parent(s) essayé(s))", niveaux)
+        return None
+
+    def _marquer_les_ancetres(self, element) -> int:
+        """Marque les parents de l'élément et renvoie leur nombre."""
+        try:
+            return int(
+                element.evaluate(
+                    """(cible, marqueur) => {
+                        let noeud = cible.parentElement;
+                        let niveau = 0;
+                        while (noeud && noeud !== document.body && niveau < 6) {
+                            noeud.setAttribute(marqueur, String(niveau));
+                            noeud = noeud.parentElement;
+                            niveau += 1;
+                        }
+                        return niveau;
+                    }""",
+                    MARQUEUR_MENU,
+                )
+            )
+        except Exception:
+            return 0
+
+    def _effacer_les_marques(self, scope) -> None:
+        try:
+            scope.evaluate(
+                """marqueur => {
+                    for (const noeud of document.querySelectorAll('[' + marqueur + ']')) {
+                        noeud.removeAttribute(marqueur);
+                    }
+                }""",
+                MARQUEUR_MENU,
+            )
+        except Exception:
+            logger.debug("Marques de menu non effacées")
+
+    def _tenter(self, ancetre, geste: str, niveau: int) -> bool:
+        """Survole ou clique un parent ; False si le geste est impossible."""
+        try:
+            if not ancetre.is_visible():
+                return False
+            if geste == "survol":
+                ancetre.hover(timeout=REVEAL_TIMEOUT_MS)
+            else:
+                ancetre.click(timeout=REVEAL_TIMEOUT_MS, no_wait_after=True)
+            return True
+        except Exception:
+            logger.debug("Parent %d : %s impossible", niveau, geste)
+            return False
+
+    def _est_visible(self, element) -> bool:
+        try:
+            return bool(element.is_visible())
+        except Exception:
+            return False
+
+    def _emettre_survols(self, element) -> None:
+        """Dernier recours : les menus pilotés par script écoutent ces événements."""
         try:
             element.evaluate(
                 """cible => {
@@ -419,11 +489,8 @@ class ScenarioConnector(BankConnector):
                     }
                 }"""
             )
-            if element.is_visible():
-                return element
         except Exception:
-            return None
-        return None
+            logger.debug("Événements de survol non émis")
 
     def _frame(self, session: BrowserSession, step: Step):
         """Retrouve l'iframe dans laquelle l'action avait été enregistrée."""

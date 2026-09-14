@@ -585,6 +585,12 @@ def test_fermeture_de_la_fenetre_detectee(settings, tmp_path):
 # ---------------------------------------------------------------- menus déroulants
 
 PAGE_MENU = Path(__file__).parent / "fixtures" / "menu_deroulant.html"
+PAGE_MENU_CLIC = Path(__file__).parent / "fixtures" / "menu_par_clic.html"
+
+SELECTEURS_MENU = [
+    'text="Relevés d\'opérations"',
+    "#menuPrincipal > li:nth-of-type(2) > ul > li:nth-of-type(3) > a",
+]
 
 
 @navigateur
@@ -604,12 +610,7 @@ def test_element_cache_dans_un_menu_deroulant(settings, tmp_path):
         settings=settings,
     )
     etape = Step(
-        action=ActionType.CLICK,
-        selectors=[
-            'text="Relevés d\'opérations"',
-            "#menuPrincipal > li:nth-of-type(2) > ul > li:nth-of-type(3) > a",
-        ],
-        label="a « Relevés d'opérations »",
+        action=ActionType.CLICK, selectors=SELECTEURS_MENU, label="a « Relevés d'opérations »"
     )
 
     with ephemeral_browser(settings.browser) as session:
@@ -674,3 +675,54 @@ def test_le_message_distingue_absent_et_invisible(settings, tmp_path):
     assert "absent du document" in message
     assert "page affichée" in message, "l'adresse aide à voir si la connexion a abouti"
     assert "visible" in etat_visible
+
+
+@navigateur
+def test_menu_qui_ne_s_ouvre_qu_au_clic(settings, tmp_path):
+    """Tous les menus ne réagissent pas au survol.
+
+    Le portail rencontré chez NATIXIS n'a pas cédé au survol seul : il fallait
+    cliquer l'entrée parente. Un seul geste ne suffit donc pas.
+    """
+    from bankextract.browser import ephemeral_browser
+
+    connecteur = ScenarioConnector(
+        config=BankConfig(
+            connector="scenario", options={"scenario_path": str(tmp_path / "x.json")}
+        ),
+        settings=settings,
+    )
+    etape = Step(action=ActionType.CLICK, selectors=SELECTEURS_MENU, label="lien de sous-menu")
+
+    with ephemeral_browser(settings.browser) as session:
+        session.goto(PAGE_MENU_CLIC.as_uri())
+        assert not session.page.locator("#cible").is_visible()
+
+        element = connecteur._resolve(session, etape)
+        element.click()
+        session.page.wait_for_timeout(200)
+        resultat = session.page.inner_text("#resultat")
+
+    assert resultat == "releve ouvert"
+
+
+@navigateur
+def test_les_marques_posees_sur_la_page_sont_retirees(settings, tmp_path):
+    """Le repérage des parents ne doit rien laisser derrière lui."""
+    from bankextract.browser import ephemeral_browser
+    from bankextract.recorder.replay import MARQUEUR_MENU
+
+    connecteur = ScenarioConnector(
+        config=BankConfig(
+            connector="scenario", options={"scenario_path": str(tmp_path / "x.json")}
+        ),
+        settings=settings,
+    )
+    etape = Step(action=ActionType.CLICK, selectors=SELECTEURS_MENU)
+
+    with ephemeral_browser(settings.browser) as session:
+        session.goto(PAGE_MENU.as_uri())
+        connecteur._resolve(session, etape)
+        restantes = session.page.locator(f"[{MARQUEUR_MENU}]").count()
+
+    assert restantes == 0
