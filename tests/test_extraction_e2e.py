@@ -7,7 +7,7 @@ téléchargement des relevés, puis alimentation de la base et exports.
 from datetime import date
 
 import pytest
-from conftest import CHROMIUM
+from conftest import NAVIGATEUR_DISPONIBLE
 
 from bankextract.config import BankConfig, OtpConfig
 from bankextract.connectors import build_connector
@@ -18,7 +18,7 @@ from bankextract.storage import Database
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.skipif(
-        CHROMIUM is None, reason="Chromium introuvable — définissez BANKEXTRACT_CHROMIUM"
+        not NAVIGATEUR_DISPONIBLE, reason="aucun navigateur installé"
     ),
 ]
 

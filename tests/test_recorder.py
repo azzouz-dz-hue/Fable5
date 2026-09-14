@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
-from conftest import CHROMIUM
+from conftest import NAVIGATEUR_DISPONIBLE
 
 from bankextract.config import BankConfig, OtpConfig
 from bankextract.recorder import ScenarioConnector, record_scenario
@@ -174,7 +174,7 @@ def navigateur(test):
     lui-même là où aucun Chromium n'est installé.
     """
     test = pytest.mark.skipif(
-        CHROMIUM is None, reason="Chromium introuvable — définissez BANKEXTRACT_CHROMIUM"
+        not NAVIGATEUR_DISPONIBLE, reason="aucun navigateur installé"
     )(test)
     return pytest.mark.e2e(test)
 

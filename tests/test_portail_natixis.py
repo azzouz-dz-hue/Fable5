@@ -14,7 +14,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from conftest import CHROMIUM
+from conftest import NAVIGATEUR_DISPONIBLE
 
 from bankextract.config import BankConfig, OtpConfig
 from bankextract.recorder import ScenarioConnector, record_scenario
@@ -25,7 +25,7 @@ from portail import COMPTE, IDENTIFIANT, MOT_DE_PASSE, demarrer_portail  # noqa:
 
 pytestmark = [
     pytest.mark.e2e,
-    pytest.mark.skipif(CHROMIUM is None, reason="Chromium introuvable"),
+    pytest.mark.skipif(not NAVIGATEUR_DISPONIBLE, reason="aucun navigateur installé"),
 ]
 
 

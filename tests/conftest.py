@@ -28,6 +28,40 @@ def _find_chromium() -> str | None:
 CHROMIUM = _find_chromium()
 
 
+def _navigateur_disponible() -> bool:
+    """Un navigateur est-il utilisable, à un endroit ou à un autre ?
+
+    Sous Windows, Playwright range le sien dans le dossier de l'utilisateur :
+    aucun chemin connu d'avance ne le désigne, et le chercher par chemin faisait
+    sauter en silence tous les tests qui pilotent un navigateur — la moitié de
+    la suite passait alors pour vérifiée sans l'être.
+    """
+    if CHROMIUM is not None:
+        return True
+    sys.path.insert(0, str(ROOT / "src"))
+    from bankextract.browser import browser_installed
+
+    return browser_installed()
+
+
+NAVIGATEUR_DISPONIBLE = _navigateur_disponible()
+
+
+@pytest.fixture(autouse=True)
+def _oublier_le_navigateur_memorise():
+    """Le résultat mémorisé ne doit pas franchir la frontière entre deux tests.
+
+    Il vaut pour la durée d'une exécution réelle — un navigateur installé ne
+    disparaît pas — mais un test qui déplace le dossier des navigateurs verrait
+    sinon la réponse du test précédent.
+    """
+    from bankextract.browser import reset_browser_cache
+
+    reset_browser_cache()
+    yield
+    reset_browser_cache()
+
+
 @pytest.fixture
 def settings(tmp_path):
     """Configuration isolée : rien n'est écrit hors du dossier temporaire."""

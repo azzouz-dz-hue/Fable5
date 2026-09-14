@@ -62,12 +62,29 @@ jobs:
       - name: Installer le navigateur
         run: python -m playwright install chromium
 
-      # Les tests pilotant un navigateur dépendent fortement de la machine :
-      # un échec ici est signalé mais ne doit pas priver d'un exécutable dont
-      # les tests de fond sont passés.
+      # Bloquante : ces tests parcourent la chaîne entière, enregistrement et
+      # rejeu compris. Les laisser échouer sans conséquence revenait à publier
+      # un exécutable dont la fonction principale n'était pas vérifiée.
       - name: Suite complète, navigateur compris
-        continue-on-error: true
         run: pytest -q
+
+      # Sous Windows, Playwright range son navigateur dans le dossier de
+      # l'utilisateur : aucun chemin connu d'avance ne le désigne. Les tests qui
+      # en dépendent étaient donc tous sautés, en silence. On exige désormais
+      # qu'ils s'exécutent réellement.
+      - name: Vérifier qu'aucun test de navigateur n'a été sauté
+        shell: pwsh
+        run: |
+          $sortie = pytest -m e2e -q --collect-only 2>&1 | Out-String
+          Write-Host $sortie
+          if ($sortie -match "(\d+)/(\d+) tests? deselected") { }
+          $resultat = pytest -m e2e -q 2>&1 | Out-String
+          Write-Host $resultat
+          if ($resultat -match "(\d+) skipped") {
+            throw "des tests de navigateur ont ete sautes : $($Matches[1])"
+          }
+          if ($resultat -notmatch "(\d+) passed") { throw "aucun test de navigateur execute" }
+          Write-Host "Tests de navigateur reellement executes"
 
   executable:
     name: Compilation de l'exécutable
