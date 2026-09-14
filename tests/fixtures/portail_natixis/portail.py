@@ -40,6 +40,11 @@ PERIODE_PAR_DEFAUT = "31/08/2026"
 #: Phrase que le portail affiche quand la période ne contient aucune écriture.
 REFUS_PERIODE_VIDE = "Aucune opération disponible sur ce compte pour la période choisie."
 
+#: Phrase affichée dans une fenêtre — et non dans le corps de la page — quand
+#: une borne de la période manque. Ouvrir le calendrier vide le champ visé :
+#: si rien ne le remplit ensuite, la demande part incomplète.
+REFUS_DATE_MANQUANTE = "Le champ 'Date' est obligatoire."
+
 #: Écritures servies dans le relevé, figées pour que les tests soient stables.
 OPERATIONS = [
     ("04/03/2026", "05/03/2026", "VIR RECU CLIENT SPA PHARMA", "", "1 250 000,00", "4 235 890,45"),
@@ -169,7 +174,7 @@ class PortailHandler(BaseHTTPRequestHandler):
 </script>"""
         )
 
-    def _releves(self, erreur: str = "") -> None:
+    def _releves(self, erreur: str = "", fenetre: str = "") -> None:
         """Page de demande de relevé, calquée sur celle du portail réel.
 
         Deux particularités y sont reproduites fidèlement, car ce sont elles qui
@@ -184,6 +189,11 @@ class PortailHandler(BaseHTTPRequestHandler):
             for j in range(1, 32)
         )
         bandeau = f'<div class="alert alert-danger" role="alert">{erreur}</div>' if erreur else ""
+        if fenetre:
+            bandeau += (
+                '<div class="ui-dialog"><h3>Attention</h3>'
+                f"<p>{fenetre}</p><button type=\"button\">OK</button></div>"
+            )
         self._page(
             f"""<h2>Relevés d'opérations</h2>{bandeau}
 <form method="post" action="/ebanking/ebanking/telecharger.ebk">
@@ -197,11 +207,11 @@ class PortailHandler(BaseHTTPRequestHandler):
     <option value="{COMPTE}">{COMPTE} DZD CL-CPT COURANTS ORDINAIRES</option>
   </select>
   <label>Période du</label>
-  <input type="text" name="du" id="dateDebut" value="{PERIODE_PAR_DEFAUT}" readonly>
-  <i class="ouvrirCalendrier" id="ouvrirCalendrier" data-cible="dateDebut">calendrier</i>
+  <input type="text" name="dateDebut" id="dateDebut" value="{PERIODE_PAR_DEFAUT}" readonly>
+  <i class="ouvrirCalendrier" id="ouvrirCalendrier" title="Calendrier" data-cible="dateDebut">&#128197;</i>
   <label>au</label>
-  <input type="text" name="au" id="dateFin" value="{PERIODE_PAR_DEFAUT}" readonly>
-  <i class="ouvrirCalendrier" id="ouvrirCalendrierFin" data-cible="dateFin">calendrier</i>
+  <input type="text" name="dateFin" id="dateFin" value="{PERIODE_PAR_DEFAUT}" readonly>
+  <i class="ouvrirCalendrier" id="ouvrirCalendrierFin" title="Calendrier" data-cible="dateFin">&#128197;</i>
   <div id="calendrier" style="display:none">
     <table class="calendrier"><tr>{jours}</tr></table>
     <span id="validerJour">Valider</span>
@@ -213,6 +223,10 @@ class PortailHandler(BaseHTTPRequestHandler):
   Array.prototype.forEach.call(document.querySelectorAll('.ouvrirCalendrier'), function (icone) {{
     icone.onclick = function () {{
       cibleCourante = icone.getAttribute('data-cible');
+      /* Ouvrir le calendrier vide le champ : tant qu'aucune case n'est
+         cliquée, la borne n'existe plus. C'est ce qui a laissé partir une
+         demande dont le champ de début était vide. */
+      document.getElementById(cibleCourante).value = '';
       document.getElementById('calendrier').style.display = 'block';
     }};
   }});
@@ -236,8 +250,13 @@ class PortailHandler(BaseHTTPRequestHandler):
         pas un fichier vide, il réaffiche sa page avec un message. Attendre un
         téléchargement qui ne viendra jamais n'apprend alors rien à personne.
         """
-        debut = _lire_une_date((champs or {}).get("du", [""])[0])
-        fin = _lire_une_date((champs or {}).get("au", [""])[0])
+        brut_debut = (champs or {}).get("dateDebut", [""])[0]
+        brut_fin = (champs or {}).get("dateFin", [""])[0]
+        if not brut_debut.strip() or not brut_fin.strip():
+            return self._releves(fenetre=REFUS_DATE_MANQUANTE)
+
+        debut = _lire_une_date(brut_debut)
+        fin = _lire_une_date(brut_fin)
         retenues = [
             operation
             for operation in OPERATIONS

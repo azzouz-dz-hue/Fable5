@@ -7,7 +7,9 @@ réel, celles-là mêmes qui ont fait échouer les premières tentatives :
   l'enregistreur ne capte pas le geste d'ouverture ;
 - une période choisie dans un calendrier plutôt que tapée au clavier, dans des
   champs verrouillés que le calendrier remplit sans émettre d'événement ;
-- un refus affiché sur la page quand la période demandée ne contient rien ;
+- un refus affiché sur la page quand la période demandée ne contient rien, et
+  un autre affiché dans une fenêtre quand une borne manque ;
+- un calendrier qui vide le champ qu'il vise dès qu'on l'ouvre ;
 - une connexion en deux temps, avec redirection vers la liste des comptes.
 """
 
@@ -35,6 +37,7 @@ from portail import (  # noqa: E402
     MOT_DE_PASSE,
     OPERATIONS,
     PERIODE_PAR_DEFAUT,
+    REFUS_DATE_MANQUANTE,
     REFUS_PERIODE_VIDE,
     demarrer_portail,
 )
@@ -288,10 +291,55 @@ def test_un_parcours_enregistre_avant_correction_retrouve_la_bonne_periode(
     scenario, _ = parcours_enregistre
     _, chemin = _version_ancienne(scenario, tmp_path / "scenarios" / "ancien.json")
 
+    resultat = _rejouer(settings, chemin, debut=date(2026, 3, 2), fin=date(2026, 3, 4))
+
+    assert resultat.errors == [], resultat.errors
+    libelles = {t.label for t in resultat.transactions}
+    assert libelles == {
+        "VIR RECU CLIENT SPA PHARMA",
+        "REGLEMENT FOURNISSEUR IMPORT",
+        "FRAIS TENUE DE COMPTE",
+    }, "la période demandée doit l'emporter, pas celle que les clics désignent"
+
+
+def test_un_champ_de_date_vide_est_reconnu_et_renseigne(
+    settings, parcours_enregistre, identifiants, tmp_path
+):
+    """Le champ que le calendrier a vidé reste un champ de date.
+
+    Le reconnaître à son seul contenu ne suffit donc pas : c'est ce qui avait
+    laissé partir une demande dont le champ de début était vide, et que le
+    portail a refusée — « Le champ 'Date' est obligatoire ».
+    """
+    scenario, _ = parcours_enregistre
+    ancien, chemin = _version_ancienne(scenario, tmp_path / "scenarios" / "ancien.json")
+
+    # Le parcours ouvre bien les deux calendriers, ce qui vide les deux champs.
+    assert sum(1 for step in ancien.steps if "calendrier" in step.label) == 2
+
     resultat = _rejouer(settings, chemin)
 
     assert resultat.errors == [], resultat.errors
     assert len(resultat.transactions) == 4
+
+
+def test_un_refus_affiche_dans_une_fenetre_est_rapporte(
+    settings, parcours_enregistre, identifiants, tmp_path
+):
+    """Un portail refuse aussi dans une fenêtre qu'il dessine lui-même."""
+    scenario, _ = parcours_enregistre
+    etapes = [
+        step.model_copy(update={"value": ""}) if step.value == TOKEN_START else step
+        for step in scenario.steps
+    ]
+    chemin = scenario.model_copy(update={"steps": etapes}).save(
+        tmp_path / "scenarios" / "sans_debut.json"
+    )
+
+    resultat = _rejouer(settings, chemin, download_timeout_ms=4_000)
+
+    rapport = " ".join(resultat.errors)
+    assert REFUS_DATE_MANQUANTE in rapport, rapport
 
 
 def test_une_periode_sans_ecriture_est_expliquee_par_la_banque(

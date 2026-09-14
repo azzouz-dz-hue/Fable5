@@ -18,7 +18,6 @@ from ..models import Account, ExtractionResult, StatementFile, Transaction
 from ..parsers import parse_statement
 from ..secrets import Credentials, get_credentials
 from .scenario import (
-    RESSEMBLE_A_UNE_DATE,
     TOKEN_END,
     TOKEN_OTP,
     TOKEN_PASSWORD,
@@ -27,6 +26,7 @@ from .scenario import (
     ActionType,
     Scenario,
     Step,
+    est_un_clic_de_jour,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,119 @@ SELECTEURS_DE_MESSAGE = (
 #: Un message d'erreur tient en quelques lignes ; au-delà, c'est la page entière.
 LONGUEUR_MAX_MESSAGE = 300
 
+#: Un portail refuse aussi dans une fenêtre qu'il dessine lui-même.
+SELECTEURS_DE_FENETRE = (
+    ".modal",
+    ".ui-dialog",
+    "[class*='dialog']",
+    "[class*='modal']",
+    "[class*='popup']",
+    "[id*='dialog']",
+    "[id*='modal']",
+)
+
+#: Au-delà, un champ qui n'accepte pas la saisie ne l'acceptera pas davantage :
+#: on passe à l'écriture depuis la page plutôt que d'attendre le délai complet.
+DELAI_SAISIE_MS = 3_000
+
+
+#: Reconnaît les champs de période dans la page, et les note.
+#:
+#: Aucun sélecteur de banque n'y figure : un portail change ses identifiants,
+#: pas la nature de ses champs. Les indices s'additionnent pour que deux champs
+#: manifestement liés à une date l'emportent sur un troisième qui n'y ressemble
+#: que de loin.
+_DETECTEUR_DE_CHAMPS_DE_DATE = r"""() => {
+  const MOTS_ENTIERS = ["du", "au", "de", "fin", "end", "start", "from", "to", "jour", "day"];
+  const MORCEAUX = ["date", "calend", "periode", "période", "debut", "début", "picker"];
+  const EST_UNE_DATE = /^\s*\d{1,4}[/\-.]\d{1,2}[/\-.]\d{1,4}\s*$/;
+
+  const motDeDate = (texte) => {
+    const t = (texte || "").trim().toLowerCase();
+    if (!t) return false;
+    if (MOTS_ENTIERS.includes(t)) return true;
+    return MORCEAUX.some((morceau) => t.includes(morceau));
+  };
+
+  const classeDe = (noeud) => {
+    const brut = noeud.className;
+    return typeof brut === "string" ? brut : (brut && brut.baseVal) || "";
+  };
+
+  /* Le texte qui annonce le champ : son étiquette, ou ce qui le précède
+     immédiatement — « Période du », « au ». */
+  const etiquetteDe = (champ) => {
+    const morceaux = [];
+    if (champ.id) {
+      const etiquette = document.querySelector('label[for="' + CSS.escape(champ.id) + '"]');
+      if (etiquette) morceaux.push(etiquette.textContent);
+    }
+    const englobante = champ.closest("label");
+    if (englobante) morceaux.push(englobante.textContent);
+    let precedent = champ.previousSibling;
+    for (let garde = 0; precedent && garde < 3; garde += 1) {
+      if (precedent.nodeType === 3 || precedent.nodeType === 1) {
+        const texte = (precedent.textContent || "").trim();
+        if (texte) morceaux.push(texte);
+      }
+      precedent = precedent.previousSibling;
+    }
+    return morceaux;
+  };
+
+  /* Une icône de calendrier posée à côté du champ le désigne sans ambiguïté. */
+  const icôneDeCalendrier = (champ) => {
+    const voisins = [];
+    let suivant = champ.nextElementSibling;
+    for (let garde = 0; suivant && garde < 3; garde += 1) {
+      voisins.push(suivant);
+      suivant = suivant.nextElementSibling;
+    }
+    return voisins.some((voisin) => {
+      const soupe = [
+        classeDe(voisin),
+        voisin.id,
+        voisin.getAttribute("title"),
+        voisin.getAttribute("alt"),
+        voisin.getAttribute("aria-label"),
+        voisin.textContent,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return soupe.includes("calend") || soupe.includes("datepick");
+    });
+  };
+
+  const IGNORES = ["hidden", "password", "checkbox", "radio", "submit", "button", "image", "file"];
+  const notes = [];
+  const champs = document.querySelectorAll("input");
+
+  for (let rang = 0; rang < champs.length; rang += 1) {
+    const champ = champs[rang];
+    const type = (champ.getAttribute("type") || "text").toLowerCase();
+    if (IGNORES.includes(type) || champ.disabled) continue;
+    const boite = champ.getBoundingClientRect();
+    if (boite.width === 0 && boite.height === 0) continue;
+
+    let note = 0;
+    if (type === "date") note += 3;
+    if (EST_UNE_DATE.test(champ.value)) note += 3;
+    const attributs = [
+      champ.name,
+      champ.id,
+      champ.getAttribute("placeholder"),
+      champ.getAttribute("aria-label"),
+      champ.getAttribute("title"),
+    ];
+    if (attributs.some(motDeDate)) note += 2;
+    if (etiquetteDe(champ).some(motDeDate)) note += 2;
+    if (icôneDeCalendrier(champ)) note += 2;
+
+    if (note > 0) notes.push({ rang: rang, note: note });
+  }
+  return notes;
+}"""
+
 
 class StepFailure(ScrapingError):
     """Une étape du scénario n'a pas pu être rejouée."""
@@ -71,6 +184,7 @@ class ScenarioConnector(BankConnector):
     def __init__(self, config, settings, otp=None, scenario: Scenario | None = None):
         super().__init__(config=config, settings=settings, otp=otp)
         self._scenario = scenario
+        self._dernier_dialogue = ""
 
     # ------------------------------------------------------------------ scénario
 
@@ -215,9 +329,18 @@ class ScenarioConnector(BankConnector):
         otp_requested_at = datetime.now(timezone.utc)
 
         periode_a_corriger = scenario.periode_figee
+        self._ecouter_les_fenetres(session)
 
         for number, step in enumerate(scenario.steps, start=1):
             logger.info("[%s] %2d/%d — %s", self.name, number, len(scenario.steps), step.describe())
+
+            # Un clic sur une case de calendrier ne peut que nuire : il désigne
+            # une position dans le mois affiché, non une date, et laisse un
+            # calendrier ouvert par-dessus la page. La période sera écrite.
+            if periode_a_corriger and est_un_clic_de_jour(step):
+                logger.info("     ↳ clic de calendrier ignoré : la période sera écrite directement")
+                continue
+
             if step.action is ActionType.DOWNLOAD and periode_a_corriger:
                 self._corriger_la_periode(session, start, end, date_format)
                 periode_a_corriger = False
@@ -350,16 +473,16 @@ class ScenarioConnector(BankConnector):
         rapporterait alors une période arbitraire — et le ferait en silence,
         ce qui est le pire des cas.
 
-        Les champs sont reconnus par ce qu'ils contiennent, non par un sélecteur
-        propre à un portail : une date, dans l'ordre où ils apparaissent. On
-        n'agit que si la page en montre exactement autant que la période en
-        demande ; dans le doute, on préfère laisser la page telle quelle et le
-        dire, car écrire au mauvais endroit serait pire que ne rien écrire.
+        Les champs sont reconnus par plusieurs indices et non par un sélecteur
+        propre à un portail. Se fier à leur seul contenu ne suffit pas : un
+        champ que le calendrier a vidé est encore un champ de date, et c'est
+        précisément celui-là qu'il faut renseigner.
         """
+        self._fermer_les_calendriers(session)
         champs = self._champs_de_date(session)
         if not champs:
             logger.warning(
-                "[%s] période choisie au calendrier, mais aucun champ de date trouvé sur "
+                "[%s] période choisie au calendrier, mais aucun champ de date reconnu sur "
                 "la page : la banque décidera seule de la période",
                 self.name,
             )
@@ -370,67 +493,132 @@ class ScenarioConnector(BankConnector):
         # un portail à date unique livrant l'historique qui s'y arrête.
         champs, voulu = (champs[:1], [fin]) if len(champs) == 1 else (champs[:2], [debut, fin])
 
-        for champ, texte in zip(champs, voulu, strict=True):
-            self._ecrire(champ, texte)
-        logger.info("[%s] période imposée aux champs de date : %s", self.name, " → ".join(voulu))
+        manques = [
+            texte
+            for champ, texte in zip(champs, voulu, strict=True)
+            if not self._ecrire(champ, texte)
+        ]
+        self._fermer_les_calendriers(session)
+
+        if manques:
+            logger.warning(
+                "[%s] période refusée par la page : %s n'a pas pu être écrit",
+                self.name,
+                ", ".join(manques),
+            )
+        else:
+            logger.info("[%s] période écrite dans les champs : %s", self.name, " → ".join(voulu))
 
     def _champs_de_date(self, session: BrowserSession) -> list:
-        """Champs visibles dont le contenu ressemble à une date, dans l'ordre de la page."""
-        trouves = []
+        """Champs de date visibles, les deux plus probables d'abord, en ordre de page.
+
+        Quatre indices, chacun suffisant à lui seul, aucun propre à une banque :
+        le type déclaré du champ, une date déjà présente, un mot de date dans
+        ses attributs ou son étiquette, et la présence d'une icône de calendrier
+        à côté de lui. Les indices s'additionnent, et seuls les deux champs les
+        mieux notés sont retenus — un formulaire porte parfois d'autres champs
+        qui ressemblent de loin à des dates.
+        """
         try:
+            notes = session.page.evaluate(_DETECTEUR_DE_CHAMPS_DE_DATE)
             candidats = session.page.query_selector_all("input")
         except Exception:
             return []
 
-        for champ in candidats:
-            try:
-                type_de_champ = (champ.get_attribute("type") or "text").lower()
-                if type_de_champ in ("hidden", "password", "checkbox", "radio", "submit", "button"):
-                    continue
-                if not champ.is_visible():
-                    continue
-                if RESSEMBLE_A_UNE_DATE.match(champ.input_value() or ""):
-                    trouves.append(champ)
-            except Exception:
-                continue
-        return trouves
+        retenus = sorted(notes, key=lambda note: (-note["note"], note["rang"]))[:2]
+        return [candidats[note["rang"]] for note in sorted(retenus, key=lambda n: n["rang"])]
 
-    def _ecrire(self, champ, texte: str) -> None:
-        """Renseigne un champ, y compris celui qu'un calendrier a rendu non modifiable.
+    def _ecrire(self, champ, texte: str) -> bool:
+        """Renseigne un champ et vérifie que la valeur a bien pris.
 
-        Beaucoup de portails verrouillent le champ de date pour forcer le passage
-        par leur calendrier. `fill` refuse alors d'écrire ; on pose la valeur
-        depuis la page et on émet les événements que le portail attend, faute de
-        quoi il ne verrait pas le changement.
+        Beaucoup de portails verrouillent le champ de date pour forcer le
+        passage par leur calendrier. `fill` refuse alors d'écrire ; on pose la
+        valeur depuis la page et on émet les événements que le portail attend,
+        faute de quoi il ne verrait pas le changement. La vérification est le
+        point important : écrire sans regarder, c'est ce qui a laissé partir une
+        demande dont le champ de début était resté vide.
         """
-        try:
-            champ.fill(texte)
-            return
-        except Exception:
-            logger.info("     ↳ champ non modifiable directement — écriture depuis la page")
+        if not self._verrouille(champ):
+            try:
+                champ.fill(texte, timeout=DELAI_SAISIE_MS)
+            except Exception:
+                logger.info("     ↳ saisie refusée — écriture depuis la page")
 
-        champ.evaluate(
-            """(cible, texte) => {
-                cible.removeAttribute('readonly');
-                cible.value = texte;
-                cible.dispatchEvent(new Event('input', { bubbles: true }));
-                cible.dispatchEvent(new Event('change', { bubbles: true }));
-            }""",
-            texte,
-        )
+        if self._valeur(champ) != texte:
+            self._ecrire_depuis_la_page(champ, texte)
+        return self._valeur(champ) == texte
+
+    def _verrouille(self, champ) -> bool:
+        try:
+            return bool(champ.evaluate("cible => cible.readOnly || cible.disabled"))
+        except Exception:
+            return False
+
+    def _valeur(self, champ) -> str:
+        try:
+            return champ.input_value() or ""
+        except Exception:
+            return ""
+
+    def _ecrire_depuis_la_page(self, champ, texte: str) -> None:
+        """Pose la valeur et émet les événements, même sur un champ verrouillé."""
+        try:
+            champ.evaluate(
+                """(cible, texte) => {
+                    cible.removeAttribute('readonly');
+                    cible.value = texte;
+                    for (const nom of ['input', 'change', 'blur']) {
+                        cible.dispatchEvent(new Event(nom, { bubbles: true }));
+                    }
+                }""",
+                texte,
+            )
+        except Exception as exc:
+            logger.info("     ↳ écriture depuis la page impossible (%s)", type(exc).__name__)
+
+    def _fermer_les_calendriers(self, session: BrowserSession) -> None:
+        """Referme un calendrier resté ouvert, qui masquerait la suite du formulaire."""
+        try:
+            session.page.keyboard.press("Escape")
+        except Exception:
+            logger.debug("Aucun calendrier à refermer")
 
     # ------------------------------------------------------------------ diagnostic
 
+    def _ecouter_les_fenetres(self, session: BrowserSession) -> None:
+        """Retient ce que disent les fenêtres d'alerte du navigateur, puis les ferme.
+
+        Sans écoute, Playwright les referme sans rien en dire : le portail a
+        donné sa raison et personne ne l'a lue.
+        """
+        self._dernier_dialogue = ""
+
+        def noter(dialogue) -> None:
+            self._dernier_dialogue = " ".join((dialogue.message or "").split())
+            logger.info("[%s] le portail affiche : %s", self.name, self._dernier_dialogue)
+            try:
+                dialogue.dismiss()
+            except Exception:  # pragma: no cover - fenêtre déjà refermée
+                logger.debug("Fenêtre déjà refermée")
+
+        try:
+            session.page.on("dialog", noter)
+        except Exception:  # pragma: no cover
+            logger.debug("Écoute des fenêtres impossible")
+
     def _message_affiche(self, session: BrowserSession) -> str:
-        """Texte que le portail affiche à l'écran, quand il refuse au lieu de livrer.
+        """Texte que le portail affiche, quand il refuse au lieu de livrer.
 
         Un téléchargement qui n'arrive pas se manifeste par un délai expiré, ce
         qui ne dit rien de la cause. Le portail, lui, l'a écrite en toutes
-        lettres sur la page — « Aucune opération disponible sur ce compte pour
-        la période choisie », par exemple. C'est cette phrase qu'il faut
-        rapporter, et non le délai.
+        lettres — « Aucune opération disponible sur ce compte pour la période
+        choisie », ou « Le champ 'Date' est obligatoire ». C'est cette phrase
+        qu'il faut rapporter, et non le délai.
         """
-        for selecteur in SELECTEURS_DE_MESSAGE:
+        if self._dernier_dialogue:
+            return self._dernier_dialogue[:LONGUEUR_MAX_MESSAGE]
+
+        for selecteur in SELECTEURS_DE_MESSAGE + SELECTEURS_DE_FENETRE:
             try:
                 elements = session.page.query_selector_all(selecteur)
             except Exception:
