@@ -132,6 +132,86 @@ def test_date_unique_traitee_comme_fin_de_periode():
     assert scenario.steps[0].value == TOKEN_END
 
 
+def _clic(label: str, selecteur: str = "#x") -> Step:
+    return Step(action=ActionType.CLICK, selectors=[selecteur], label=label)
+
+
+def test_les_clics_de_calendrier_cedent_la_place_a_la_date_ecrite():
+    """Le défaut qui a livré une période d'un seul jour.
+
+    Le portail écrit la date dans le champ ; les clics qui l'ont produite ne
+    désignent qu'une position dans le mois affiché. Conservés, ils rouvriraient
+    un calendrier par-dessus la page et en choisiraient une autre.
+    """
+    scenario = Scenario(
+        bank="x",
+        steps=[
+            Step(action=ActionType.SELECT, selectors=["#format"], value="csv"),
+            _clic("i « calendrier »"),
+            _clic("td « 1 »"),
+            Step(action=ActionType.FILL, selectors=["#du"], value="01/09/2026"),
+            _clic("i « calendrier »"),
+            _clic("td « 30 »"),
+            Step(action=ActionType.FILL, selectors=["#au"], value="30/09/2026"),
+        ],
+    )
+
+    annotate_scenario(scenario)
+
+    assert [step.action for step in scenario.steps] == [
+        ActionType.SELECT,
+        ActionType.FILL,
+        ActionType.FILL,
+    ]
+    assert scenario.steps[1].value == TOKEN_START
+    assert scenario.steps[2].value == TOKEN_END
+    assert not scenario.periode_figee
+
+
+def test_un_clic_qui_ne_precede_aucune_date_est_conserve():
+    """La suppression ne doit pas mordre sur le reste du parcours."""
+    scenario = Scenario(
+        bank="x",
+        steps=[
+            _clic("a « Relevés d'opérations »"),
+            _clic("button « Adobe PDF »"),
+            Step(action=ActionType.FILL, selectors=["#ref"], value="DOM-2026-007"),
+        ],
+    )
+
+    annotate_scenario(scenario)
+
+    assert len(scenario.steps) == 3
+
+
+def test_seuls_les_clics_qui_touchent_le_calendrier_sont_retires():
+    """Un clic ordinaire placé avant une date ne vient pas d'un calendrier."""
+    scenario = Scenario(
+        bank="x",
+        steps=[
+            _clic("a « Rechercher »"),
+            Step(action=ActionType.FILL, selectors=["#du"], value="01/09/2026"),
+        ],
+    )
+
+    annotate_scenario(scenario)
+
+    assert len(scenario.steps) == 2, "aucune case de calendrier : rien à retirer"
+
+
+def test_une_periode_choisie_au_calendrier_sans_date_reste_signalee():
+    """Les parcours enregistrés avant correction ne portent aucune date."""
+    scenario = Scenario(
+        bank="x",
+        steps=[_clic("i « calendrier »"), _clic("td « 1 »")],
+    )
+
+    annotate_scenario(scenario)
+
+    assert scenario.periode_figee, "le rejeu doit savoir qu'il lui faut écrire les dates"
+    assert scenario.clics_de_calendrier == [2]
+
+
 def test_detecteur_de_secret_oublie():
     """Filet de sécurité : un champ de mot de passe porteur d'une vraie valeur."""
     scenario = Scenario(

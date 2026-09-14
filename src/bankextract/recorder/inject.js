@@ -144,6 +144,19 @@
     return placeholder ? `${tag} « ${placeholder} »` : tag;
   };
 
+  /* Dernière valeur connue de chaque champ, pour distinguer ce que la page
+     écrit elle-même de ce que l'utilisateur a déjà dicté. */
+  const valeursConnues = new WeakMap();
+
+  /* Une valeur qui ressemble à une date — même expression que côté Python. */
+  const ressembleAUneDate = (texte) => /^\s*\d{1,4}[/\-.]\d{1,2}[/\-.]\d{1,4}\s*$/.test(texte);
+
+  const champsDeTexte = () =>
+    Array.prototype.filter.call(document.querySelectorAll("input"), (element) => {
+      const type = (element.getAttribute("type") || "text").toLowerCase();
+      return !["password", "checkbox", "radio", "submit", "button", "image", "file"].includes(type);
+    });
+
   document.addEventListener(
     "click",
     (event) => {
@@ -201,6 +214,7 @@
       if (tag === "input" || tag === "textarea") {
         /* Le mot de passe ne quitte jamais la page : seul un marqueur est transmis. */
         const secret = type === "password";
+        valeursConnues.set(element, element.value);
         send({
           action: "fill",
           selectors: buildSelectors(element),
@@ -214,6 +228,92 @@
     },
     true
   );
+
+  /* Un calendrier écrit la date dans le champ sans déclencher « change » : le
+     geste serait alors perdu, et seuls resteraient les clics sur les cases. Or
+     un clic sur une case ne désigne pas une date, mais une position dans le
+     mois affiché — rejoué, il choisit un autre jour. C'est ce qui a livré une
+     période d'un seul jour là où l'utilisateur en avait choisi trente.
+
+     On capte donc l'écriture elle-même, de deux façons complémentaires :
+     l'affectation `champ.value = …`, interceptée au moment où elle a lieu, et
+     un relevé périodique qui rattrape les autres manières de changer un champ.
+     La capture est volontairement étroite — seule une valeur qui ressemble à
+     une date est retenue — pour qu'un champ recalculé par le portail
+     n'encombre pas le parcours. */
+  const signalerUneDate = (element, valeur) => {
+    if (!ressembleAUneDate(valeur)) return;
+    const type = (element.getAttribute("type") || "text").toLowerCase();
+    if (type === "password" || !document.contains(element)) return;
+    valeursConnues.set(element, valeur);
+    send({
+      action: "fill",
+      selectors: buildSelectors(element),
+      value: valeur,
+      secret: false,
+      input_type: type,
+      label: describe(element),
+      frame_url: frameUrl(),
+    });
+  };
+
+  /* Le prototype est modifié avant que la page n'exécute le moindre script :
+     aucune écriture ne peut donc passer inaperçue faute d'avoir eu lieu trop
+     tôt. La frappe au clavier, elle, ne passe pas par cet accesseur — elle
+     reste captée par « change », sans double enregistrement. */
+  const accesseur = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+  if (accesseur && accesseur.set) {
+    Object.defineProperty(HTMLInputElement.prototype, "value", {
+      configurable: true,
+      enumerable: accesseur.enumerable,
+      get: function () {
+        return accesseur.get.call(this);
+      },
+      set: function (nouvelle) {
+        const ancienne = accesseur.get.call(this);
+        accesseur.set.call(this, nouvelle);
+        if (String(ancienne) !== String(nouvelle)) {
+          try {
+            signalerUneDate(this, String(nouvelle));
+          } catch (erreur) {
+            /* Jamais au détriment de la page de l'utilisateur. */
+          }
+        }
+      },
+    });
+  }
+
+  /* Le filet : un champ modifié autrement — par son attribut, par un composant
+     qui court-circuite l'accesseur — finit par être vu ici. Les valeurs de
+     départ sont mémorisées dès que le document existe, faute de quoi une
+     modification survenue avant le premier relevé passerait pour l'état
+     initial et ne serait jamais signalée. */
+  const memoriserLesValeurs = () => {
+    for (const element of champsDeTexte()) {
+      if (!valeursConnues.has(element)) valeursConnues.set(element, element.value);
+    }
+  };
+
+  const releverLesDatesEcritesParLaPage = () => {
+    for (const element of champsDeTexte()) {
+      if (element === document.activeElement) continue; /* saisie en cours */
+      const connue = valeursConnues.get(element);
+      if (connue === undefined) {
+        valeursConnues.set(element, element.value);
+        continue;
+      }
+      if (element.value === connue) continue;
+      valeursConnues.set(element, element.value);
+      signalerUneDate(element, element.value);
+    }
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", memoriserLesValeurs, true);
+  } else {
+    memoriserLesValeurs();
+  }
+  setInterval(releverLesDatesEcritesParLaPage, 250);
 
   document.addEventListener(
     "keydown",

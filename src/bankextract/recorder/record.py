@@ -30,9 +30,11 @@ from .scenario import (
     ActionType,
     Scenario,
     Step,
+    est_un_clic_de_jour,
     key_character,
     key_template,
     keypad_runs,
+    valeur_de_date,
 )
 
 logger = logging.getLogger(__name__)
@@ -254,8 +256,58 @@ def annotate_scenario(scenario: Scenario) -> list[str]:
     notes += _tag_virtual_keyboard(scenario)
     notes += _tag_username(scenario)
     notes += _tag_otp(scenario)
+    # Avant de transformer les dates en jetons : la reconnaissance ci-dessous
+    # travaille sur les valeurs, qui n'auront plus rien d'une date ensuite.
+    notes += _oublier_les_clics_de_calendrier(scenario)
     notes += _tag_period(scenario)
     return notes
+
+
+#: Au-delà, la suite de clics qui précède une date ne vient plus du calendrier.
+MAX_CLICS_DE_CALENDRIER = 8
+
+
+def _oublier_les_clics_de_calendrier(scenario: Scenario) -> list[str]:
+    """Retire les clics qui n'ont servi qu'à porter une date dans son champ.
+
+    Ouvrir un calendrier puis cliquer une case, c'est désigner une position dans
+    le mois affiché, non une date : rejoué un autre jour, le même clic tombe
+    ailleurs. Seule l'écriture dans le champ porte la date, et elle seule
+    deviendra un jeton. Les clics qui l'ont produite sont donc supprimés, faute
+    de quoi ils rouvriraient un calendrier par-dessus la page.
+
+    La suppression est prudente : elle ne touche qu'une suite ininterrompue de
+    clics qui précède immédiatement la saisie d'une date et qui contient au
+    moins une case de calendrier.
+    """
+    notes: list[str] = []
+    # De la fin vers le début : chaque suppression décale ce qui suit, et la
+    # reprise repart juste avant la suite retirée.
+    index = len(scenario.steps) - 1
+    while index >= 0:
+        if valeur_de_date(scenario.steps[index]) is None:
+            index -= 1
+            continue
+
+        debut = index
+        while (
+            debut > 0
+            and scenario.steps[debut - 1].action is ActionType.CLICK
+            and index - debut < MAX_CLICS_DE_CALENDRIER
+        ):
+            debut -= 1
+
+        if not any(est_un_clic_de_jour(step) for step in scenario.steps[debut:index]):
+            index -= 1
+            continue
+
+        del scenario.steps[debut:index]
+        notes.append(
+            f"étapes {debut + 1} à {index} reconnues comme le maniement d'un calendrier "
+            "→ supprimées ; seule la date écrite dans le champ est conservée"
+        )
+        index = debut - 1
+    return list(reversed(notes))
 
 
 def _tag_virtual_keyboard(scenario: Scenario) -> list[str]:

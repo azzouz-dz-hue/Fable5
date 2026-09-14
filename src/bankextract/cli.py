@@ -644,7 +644,11 @@ def scenarios(
             str(len(scenario.steps)),
             str(len(scenario.downloads)),
             "oui" if scenario.uses_otp else "non",
-            "variable" if scenario.uses_period else "figée",
+            "variable"
+            if scenario.uses_period
+            else "rattrapée"
+            if scenario.periode_figee
+            else "par défaut",
             scenario.created_at.strftime("%d/%m/%Y"),
         )
     console.print(table)

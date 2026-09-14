@@ -18,6 +18,7 @@ from ..models import Account, ExtractionResult, StatementFile, Transaction
 from ..parsers import parse_statement
 from ..secrets import Credentials, get_credentials
 from .scenario import (
+    RESSEMBLE_A_UNE_DATE,
     TOKEN_END,
     TOKEN_OTP,
     TOKEN_PASSWORD,
@@ -39,6 +40,22 @@ REVEAL_TIMEOUT_MS = 1_500
 
 #: Attribut posé le temps d'identifier les parents à déplier, puis retiré.
 MARQUEUR_MENU = "data-bankextract-parent"
+
+#: Endroits où un portail annonce qu'il n'a rien à livrer.
+SELECTEURS_DE_MESSAGE = (
+    "[role=alert]",
+    ".alert",
+    ".alert-danger",
+    ".erreur",
+    ".error",
+    ".message-erreur",
+    ".msg-erreur",
+    ".text-danger",
+    ".notification",
+)
+
+#: Un message d'erreur tient en quelques lignes ; au-delà, c'est la page entière.
+LONGUEUR_MAX_MESSAGE = 300
 
 
 class StepFailure(ScrapingError):
@@ -191,8 +208,13 @@ class ScenarioConnector(BankConnector):
         date_format = str((self.config.options or {}).get("date_format", "%d/%m/%Y"))
         otp_requested_at = datetime.now(timezone.utc)
 
+        periode_a_corriger = scenario.periode_figee
+
         for number, step in enumerate(scenario.steps, start=1):
             logger.info("[%s] %2d/%d — %s", self.name, number, len(scenario.steps), step.describe())
+            if step.action is ActionType.DOWNLOAD and periode_a_corriger:
+                self._corriger_la_periode(session, start, end, date_format)
+                periode_a_corriger = False
             try:
                 path = self._run_step(
                     session,
@@ -247,7 +269,7 @@ class ScenarioConnector(BankConnector):
         value = self._resolve_value(step, credentials, start, end, date_format, otp_requested_at)
 
         if step.action is ActionType.FILL:
-            target.fill(value or "")
+            self._ecrire(target, value or "")
         elif step.action is ActionType.SELECT:
             target.select_option(value or "")
         elif step.action is ActionType.CHECK:
@@ -259,7 +281,16 @@ class ScenarioConnector(BankConnector):
         elif step.action is ActionType.CLICK:
             self._cliquer(target)
         elif step.action is ActionType.DOWNLOAD:
-            return session.download_to(lambda: self._cliquer(target), destination)
+            try:
+                return session.download_to(lambda: self._cliquer(target), destination)
+            except Exception as exc:
+                message = self._message_affiche(session)
+                if message:
+                    raise StepFailure(
+                        "la banque n'a envoyé aucun fichier. Elle affiche : "
+                        f"« {message} »"
+                    ) from exc
+                raise
 
         session.page.wait_for_load_state("domcontentloaded")
         return None
@@ -295,6 +326,115 @@ class ScenarioConnector(BankConnector):
                     f"« {step.key_template} » ne correspond plus"
                 ) from exc
             touche.click()
+
+    # ------------------------------------------------------------------ période
+
+    def _corriger_la_periode(
+        self, session: BrowserSession, start: date, end: date, date_format: str
+    ) -> None:
+        """Écrit la période demandée dans les champs de date, juste avant le téléchargement.
+
+        Un parcours dont les dates ont été choisies dans un calendrier ne
+        contient que des clics. Rejoués, ils ne désignent pas les mêmes dates :
+        une case n'est qu'une position dans le mois affiché. L'extraction
+        rapporterait alors une période arbitraire — et le ferait en silence,
+        ce qui est le pire des cas.
+
+        Les champs sont reconnus par ce qu'ils contiennent, non par un sélecteur
+        propre à un portail : une date, dans l'ordre où ils apparaissent. On
+        n'agit que si la page en montre exactement autant que la période en
+        demande ; dans le doute, on préfère laisser la page telle quelle et le
+        dire, car écrire au mauvais endroit serait pire que ne rien écrire.
+        """
+        champs = self._champs_de_date(session)
+        if not champs:
+            logger.warning(
+                "[%s] période choisie au calendrier, mais aucun champ de date trouvé sur "
+                "la page : la banque décidera seule de la période",
+                self.name,
+            )
+            return
+
+        debut, fin = start.strftime(date_format), end.strftime(date_format)
+        # Un seul champ ne peut porter qu'une borne : c'est la fin qui compte,
+        # un portail à date unique livrant l'historique qui s'y arrête.
+        champs, voulu = (champs[:1], [fin]) if len(champs) == 1 else (champs[:2], [debut, fin])
+
+        for champ, texte in zip(champs, voulu, strict=True):
+            self._ecrire(champ, texte)
+        logger.info("[%s] période imposée aux champs de date : %s", self.name, " → ".join(voulu))
+
+    def _champs_de_date(self, session: BrowserSession) -> list:
+        """Champs visibles dont le contenu ressemble à une date, dans l'ordre de la page."""
+        trouves = []
+        try:
+            candidats = session.page.query_selector_all("input")
+        except Exception:
+            return []
+
+        for champ in candidats:
+            try:
+                type_de_champ = (champ.get_attribute("type") or "text").lower()
+                if type_de_champ in ("hidden", "password", "checkbox", "radio", "submit", "button"):
+                    continue
+                if not champ.is_visible():
+                    continue
+                if RESSEMBLE_A_UNE_DATE.match(champ.input_value() or ""):
+                    trouves.append(champ)
+            except Exception:
+                continue
+        return trouves
+
+    def _ecrire(self, champ, texte: str) -> None:
+        """Renseigne un champ, y compris celui qu'un calendrier a rendu non modifiable.
+
+        Beaucoup de portails verrouillent le champ de date pour forcer le passage
+        par leur calendrier. `fill` refuse alors d'écrire ; on pose la valeur
+        depuis la page et on émet les événements que le portail attend, faute de
+        quoi il ne verrait pas le changement.
+        """
+        try:
+            champ.fill(texte)
+            return
+        except Exception:
+            logger.info("     ↳ champ non modifiable directement — écriture depuis la page")
+
+        champ.evaluate(
+            """(cible, texte) => {
+                cible.removeAttribute('readonly');
+                cible.value = texte;
+                cible.dispatchEvent(new Event('input', { bubbles: true }));
+                cible.dispatchEvent(new Event('change', { bubbles: true }));
+            }""",
+            texte,
+        )
+
+    # ------------------------------------------------------------------ diagnostic
+
+    def _message_affiche(self, session: BrowserSession) -> str:
+        """Texte que le portail affiche à l'écran, quand il refuse au lieu de livrer.
+
+        Un téléchargement qui n'arrive pas se manifeste par un délai expiré, ce
+        qui ne dit rien de la cause. Le portail, lui, l'a écrite en toutes
+        lettres sur la page — « Aucune opération disponible sur ce compte pour
+        la période choisie », par exemple. C'est cette phrase qu'il faut
+        rapporter, et non le délai.
+        """
+        for selecteur in SELECTEURS_DE_MESSAGE:
+            try:
+                elements = session.page.query_selector_all(selecteur)
+            except Exception:
+                continue
+            for element in elements:
+                try:
+                    if not element.is_visible():
+                        continue
+                    texte = " ".join((element.inner_text() or "").split())
+                except Exception:
+                    continue
+                if texte:
+                    return texte[:LONGUEUR_MAX_MESSAGE]
+        return ""
 
     def _cliquer(self, element) -> None:
         """Clique, en insistant si l'élément se dérobe.

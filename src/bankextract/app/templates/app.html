@@ -399,9 +399,9 @@ function afficherBanques(banques) {
         ${pastille(b.parcours_enregistre, "parcours enregistré", "parcours à enregistrer")}
       </div>
       ${b.periode_figee ? `<p class="aide" style="margin:-4px 0 10px;color:var(--alerte)">
-        Période figée : les dates ont été choisies dans un calendrier, chaque extraction
-        reprendra donc la même période. Réenregistrez le parcours en laissant la période
-        proposée par défaut si vous comptez programmer des extractions.
+        Période choisie au calendrier : aucune date n'a été captée, seulement des clics.
+        La période demandée sera écrite d'office dans les champs de date avant chaque
+        téléchargement. Réenregistrer le parcours reste plus sûr.
       </p>` : ""}
       ${!navigateurPret ? `<p class="aide" style="margin:-4px 0 10px">Préparez d'abord le poste (ci-dessus).</p>` :
         b.parcours_enregistre && b.identifiants_prets ? "" :

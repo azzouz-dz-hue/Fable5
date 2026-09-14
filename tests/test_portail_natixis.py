@@ -5,7 +5,9 @@ réel, celles-là mêmes qui ont fait échouer les premières tentatives :
 
 - un sous-menu qui ne s'ouvre qu'au clic sur son entrée parente, alors que
   l'enregistreur ne capte pas le geste d'ouverture ;
-- une période choisie dans un calendrier plutôt que tapée au clavier ;
+- une période choisie dans un calendrier plutôt que tapée au clavier, dans des
+  champs verrouillés que le calendrier remplit sans émettre d'événement ;
+- un refus affiché sur la page quand la période demandée ne contient rien ;
 - une connexion en deux temps, avec redirection vers la liste des comptes.
 """
 
@@ -18,10 +20,24 @@ from conftest import NAVIGATEUR_DISPONIBLE
 
 from bankextract.config import BankConfig, OtpConfig
 from bankextract.recorder import ScenarioConnector, record_scenario
-from bankextract.recorder.scenario import TOKEN_PASSWORD, ActionType
+from bankextract.recorder.scenario import (
+    TOKEN_END,
+    TOKEN_PASSWORD,
+    TOKEN_START,
+    ActionType,
+    Step,
+)
 
 sys.path.append(str(Path(__file__).parent / "fixtures" / "portail_natixis"))
-from portail import COMPTE, IDENTIFIANT, MOT_DE_PASSE, demarrer_portail  # noqa: E402
+from portail import (  # noqa: E402
+    COMPTE,
+    IDENTIFIANT,
+    MOT_DE_PASSE,
+    OPERATIONS,
+    PERIODE_PAR_DEFAUT,
+    REFUS_PERIODE_VIDE,
+    demarrer_portail,
+)
 
 pytestmark = [
     pytest.mark.e2e,
@@ -51,10 +67,15 @@ def _parcours(page):
     page.click("#formatPdf")
     page.click("#formatCsv")
     page.select_option("#choixFormat", "csv")
+    # La période se choisit au calendrier : deux icônes, deux cases cliquées.
+    # Le portail écrit alors la date dans un champ verrouillé, sans émettre le
+    # moindre événement — d'où l'attente, le temps que le veilleur la relève.
     page.click("#ouvrirCalendrier")
     page.click("table.calendrier td:nth-of-type(1)")
-    page.click("#validerJour")
+    page.wait_for_timeout(500)
+    page.click("#ouvrirCalendrierFin")
     page.click("text='30'")
+    page.wait_for_timeout(500)
     with page.expect_download():
         page.click("input[type=submit]")
     page.wait_for_timeout(300)
@@ -75,7 +96,7 @@ def identifiants(monkeypatch):
     monkeypatch.setenv("BANKEXTRACT_NATIXIS_PASSWORD", MOT_DE_PASSE)
 
 
-def _rejouer(settings, chemin):
+def _rejouer(settings, chemin, debut=date(2026, 1, 1), fin=date(2026, 12, 31)):
     connecteur = ScenarioConnector(
         config=BankConfig(
             connector="scenario",
@@ -87,7 +108,36 @@ def _rejouer(settings, chemin):
         settings=settings,
     )
     connecteur.name = "natixis"
-    return connecteur.run(start=date(2026, 1, 1), end=date(2026, 12, 31))
+    return connecteur.run(start=debut, end=fin)
+
+
+def _version_ancienne(scenario, chemin):
+    """Le parcours tel que l'enregistreur le produisait avant correction.
+
+    Le choix de la période n'y laisse que des clics : la date écrite par le
+    calendrier, faute d'événement, n'était captée par personne. C'est le fichier
+    que possèdent les utilisateurs ayant enregistré leur parcours jusqu'ici.
+    """
+    ouvreurs = ["#ouvrirCalendrier", "#ouvrirCalendrierFin"]
+    etapes: list[Step] = []
+    for step in scenario.steps:
+        if step.value in (TOKEN_START, TOKEN_END):
+            ouvreur = ouvreurs.pop(0) if ouvreurs else "#ouvrirCalendrier"
+            etapes.append(
+                Step(action=ActionType.CLICK, selectors=[ouvreur], label="i « calendrier »")
+            )
+            etapes.append(
+                Step(
+                    action=ActionType.CLICK,
+                    selectors=["table.calendrier td:nth-of-type(1)"],
+                    label="td « 1 »",
+                )
+            )
+            continue
+        etapes.append(step)
+
+    ancien = scenario.model_copy(update={"steps": etapes})
+    return ancien, ancien.save(chemin)
 
 
 def test_le_parcours_complet_est_capte(parcours_enregistre):
@@ -187,3 +237,90 @@ def test_mot_de_passe_refuse_signale_clairement(settings, parcours_enregistre, m
     message = " ".join(resultat.errors)
     assert "introuvable" in message
     assert "page affichée" in message, "l'adresse montre qu'on est resté sur la connexion"
+
+
+# --------------------------------------------------------------- la période
+
+
+def test_la_date_ecrite_par_le_calendrier_devient_un_jeton(parcours_enregistre):
+    """Le défaut qui rendait toute programmation vaine.
+
+    Le portail écrit la date dans un champ verrouillé sans émettre d'événement.
+    Ne restaient donc du choix de la période que des clics sur des cases — or
+    une case n'est pas une date, mais une position dans le mois affiché :
+    rejouée, elle en désigne une autre. L'utilisateur avait choisi du 1er au 30
+    septembre ; l'extraction a demandé le 31 août, deux fois.
+    """
+    scenario, _ = parcours_enregistre
+
+    valeurs = [step.value for step in scenario.steps]
+    assert TOKEN_START in valeurs, "le début de période doit être un jeton"
+    assert TOKEN_END in valeurs, "la fin de période doit être un jeton"
+    assert not scenario.periode_figee, "la période doit suivre la date d'exécution"
+    assert scenario.clics_de_calendrier == [], (
+        "les clics qui n'ont servi qu'à remplir le champ doivent être oubliés : "
+        "rejoués, ils rouvriraient un calendrier par-dessus la page"
+    )
+
+
+def test_le_releve_couvre_la_periode_demandee(settings, parcours_enregistre, identifiants):
+    """La période demandée l'emporte sur celle qui a été enregistrée."""
+    _, chemin = parcours_enregistre
+
+    resultat = _rejouer(settings, chemin, debut=date(2026, 3, 2), fin=date(2026, 3, 3))
+
+    assert resultat.errors == [], resultat.errors
+    libelles = {t.label for t in resultat.transactions}
+    assert libelles == {"REGLEMENT FOURNISSEUR IMPORT", "FRAIS TENUE DE COMPTE"}, (
+        "seules les écritures de la période demandée doivent revenir"
+    )
+
+
+def test_un_parcours_enregistre_avant_correction_retrouve_la_bonne_periode(
+    settings, parcours_enregistre, identifiants, tmp_path
+):
+    """Les parcours déjà enregistrés doivent marcher sans être refaits.
+
+    Celui-ci ne porte aucune date : rejoué tel quel, il cliquerait deux fois la
+    même case et demanderait une journée vide. Les champs de date sont donc
+    renseignés d'office avant le téléchargement.
+    """
+    scenario, _ = parcours_enregistre
+    _, chemin = _version_ancienne(scenario, tmp_path / "scenarios" / "ancien.json")
+
+    resultat = _rejouer(settings, chemin)
+
+    assert resultat.errors == [], resultat.errors
+    assert len(resultat.transactions) == 4
+
+
+def test_une_periode_sans_ecriture_est_expliquee_par_la_banque(
+    settings, parcours_enregistre, identifiants
+):
+    """Un fichier qui n'arrive pas n'est pas une panne : c'est une réponse.
+
+    C'est ce qu'a vécu l'utilisateur — « Timeout 45000ms exceeded while waiting
+    for event "download" » — là où le portail affichait, en toutes lettres, la
+    raison de son refus.
+    """
+    _, chemin = parcours_enregistre
+    settings.browser.timeout_ms = 4_000
+
+    resultat = _rejouer(settings, chemin, debut=date(2026, 8, 1), fin=date(2026, 8, 31))
+
+    rapport = " ".join(resultat.errors)
+    assert REFUS_PERIODE_VIDE in rapport, rapport
+    assert "TimeoutError" not in rapport, (
+        "le délai expiré n'explique rien ; la phrase de la banque, si"
+    )
+
+
+def test_la_periode_par_defaut_du_portail_ne_contient_rien(settings, parcours_enregistre):
+    """Garde-fou du scénario de test : la valeur initiale des champs est vide d'écritures.
+
+    Si elle cessait de l'être, les deux tests précédents passeraient sans rien
+    prouver — le relevé arriverait quoi qu'il advienne des champs de date.
+    """
+    assert PERIODE_PAR_DEFAUT == "31/08/2026"
+    assert all(not operation[0].endswith("/08/2026") for operation in OPERATIONS)
+

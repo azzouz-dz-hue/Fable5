@@ -608,5 +608,9 @@ def test_periode_figee_signalee_sur_la_fiche(client, config_path, tmp_path):
     assert banque["periode_figee"] is True
 
 
-def test_mention_de_periode_figee_dans_la_page(client):
-    assert "Période figée" in client.get("/").text
+def test_mention_de_periode_choisie_au_calendrier_dans_la_page(client):
+    """L'utilisateur doit lire ce qui se passe, et non le découvrir dans ses chiffres."""
+    page = client.get("/").text
+
+    assert "Période choisie au calendrier" in page
+    assert "écrite d'office dans les champs de date" in page

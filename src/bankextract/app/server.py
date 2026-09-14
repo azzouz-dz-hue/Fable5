@@ -345,14 +345,16 @@ def creer_application(
             if scenario.periode_figee:
                 etapes = ", ".join(str(n) for n in scenario.clics_de_calendrier)
                 operation.lignes.append(
-                    f"ATTENTION : période figée. Les dates ont été choisies dans un "
-                    f"calendrier (étapes {etapes}), non tapées au clavier : chaque "
-                    "extraction reprendra la même période."
+                    f"ATTENTION : la période a été choisie dans un calendrier "
+                    f"(étapes {etapes}) et aucune date n'a été captée. Un clic sur une "
+                    "case ne désigne pas une date mais une position dans le mois "
+                    "affiché : rejoué, il en choisit une autre."
                 )
                 operation.lignes.append(
-                    "Pour une extraction programmée, réenregistrez le parcours en "
-                    "laissant la période proposée par défaut, ou en tapant les dates "
-                    "si le portail le permet."
+                    "La période demandée sera donc écrite d'office dans les champs de "
+                    "date avant chaque téléchargement. Ce rattrapage suppose que le "
+                    "portail montre ses dates dans des champs ; réenregistrer le "
+                    "parcours, où la date est captée directement, reste plus sûr."
                 )
 
             chemin = Path((config.options or {}).get("scenario_path", f"scenarios/{cle}.json"))

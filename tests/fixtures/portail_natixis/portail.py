@@ -10,18 +10,35 @@ contre les particularités qui ont fait échouer les premiers essais :
 
 - un sous-menu qui ne s'ouvre qu'au clic sur son entrée parente ;
 - une période choisie dans un calendrier, et non tapée au clavier ;
+- des champs de date verrouillés, que le calendrier remplit sans émettre le
+  moindre événement — de sorte qu'un enregistreur à l'écoute des seuls
+  événements n'en garde aucune trace ;
+- un refus explicite, affiché sur la page, quand la période ne contient rien ;
 - une connexion en deux temps, avec redirection.
 """
 
 from __future__ import annotations
 
 import threading
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 IDENTIFIANT = "0016777640"
 MOT_DE_PASSE = "secret-natixis"
 COMPTE = "00167 7764082001 45"
+
+#: Le seul mois que le calendrier sait afficher. Une case n'y désigne donc pas
+#: une date mais une position : rejouée, elle tombe dans ce mois-là, quel que
+#: soit celui que l'utilisateur croyait avoir choisi.
+MOIS_DU_CALENDRIER = "03/2026"
+
+#: Ce que les champs de période portent à l'ouverture de la page — la même
+#: période d'un seul jour, vide, que le portail réel a proposée.
+PERIODE_PAR_DEFAUT = "31/08/2026"
+
+#: Phrase que le portail affiche quand la période ne contient aucune écriture.
+REFUS_PERIODE_VIDE = "Aucune opération disponible sur ce compte pour la période choisie."
 
 #: Écritures servies dans le relevé, figées pour que les tests soient stables.
 OPERATIONS = [
@@ -95,7 +112,7 @@ class PortailHandler(BaseHTTPRequestHandler):
         if chemin == "/ebanking/ebanking/releves.ebk":
             return self._releves()
         if chemin == "/ebanking/ebanking/telecharger.ebk":
-            return self._telecharger()
+            return self._telecharger(parse_qs(urlparse(self.path).query))
         return self._page("<h1>404</h1>", statut=404)
 
     def do_POST(self) -> None:  # noqa: N802
@@ -113,7 +130,7 @@ class PortailHandler(BaseHTTPRequestHandler):
             return self._connexion(erreur="Identifiant ou mot de passe incorrect.")
 
         if chemin == "/ebanking/ebanking/telecharger.ebk":
-            return self._telecharger()
+            return self._telecharger(champs)
         return self._page("<h1>404</h1>", statut=404)
 
     # ------------------------------------------------------------------ pages
@@ -152,13 +169,23 @@ class PortailHandler(BaseHTTPRequestHandler):
 </script>"""
         )
 
-    def _releves(self) -> None:
+    def _releves(self, erreur: str = "") -> None:
+        """Page de demande de relevé, calquée sur celle du portail réel.
+
+        Deux particularités y sont reproduites fidèlement, car ce sont elles qui
+        ont produit l'incident : les champs de date sont verrouillés — on ne peut
+        les remplir qu'au calendrier — et le calendrier y écrit la date par
+        affectation directe, sans émettre « change ». Un enregistreur qui
+        n'écoute que les événements ne garde donc du choix de la période que des
+        clics sur des cases, qui ne la désignent pas.
+        """
         jours = "".join(
             f'<td onclick="choisirJour({j})">{j}</td>' + ("</tr><tr>" if j % 7 == 0 else "")
-            for j in range(1, 31)
+            for j in range(1, 32)
         )
+        bandeau = f'<div class="alert alert-danger" role="alert">{erreur}</div>' if erreur else ""
         self._page(
-            f"""<h2>Relevés d'opérations</h2>
+            f"""<h2>Relevés d'opérations</h2>{bandeau}
 <form method="post" action="/ebanking/ebanking/telecharger.ebk">
   <button type="button" id="formatPdf">Adobe PDF</button>
   <a href="#" id="formatCsv">Excel (CSV)</a>
@@ -166,37 +193,76 @@ class PortailHandler(BaseHTTPRequestHandler):
     <option value="pdf">Adobe PDF</option>
     <option value="csv">Excel (CSV)</option>
   </select>
-  <i id="ouvrirCalendrier" title="Choisir une période">calendrier</i>
+  <select name="compte" id="choixCompte">
+    <option value="{COMPTE}">{COMPTE} DZD CL-CPT COURANTS ORDINAIRES</option>
+  </select>
+  <label>Période du</label>
+  <input type="text" name="du" id="dateDebut" value="{PERIODE_PAR_DEFAUT}" readonly>
+  <i class="ouvrirCalendrier" id="ouvrirCalendrier" data-cible="dateDebut">calendrier</i>
+  <label>au</label>
+  <input type="text" name="au" id="dateFin" value="{PERIODE_PAR_DEFAUT}" readonly>
+  <i class="ouvrirCalendrier" id="ouvrirCalendrierFin" data-cible="dateFin">calendrier</i>
   <div id="calendrier" style="display:none">
     <table class="calendrier"><tr>{jours}</tr></table>
     <span id="validerJour">Valider</span>
   </div>
-  <input type="hidden" name="du" id="du"><input type="hidden" name="au" id="au">
   <input type="submit" value="Télécharger">
 </form>
 <script>
-  var jours = [];
-  document.getElementById('ouvrirCalendrier').onclick = function () {{
-    document.getElementById('calendrier').style.display = 'block';
-  }};
+  var cibleCourante = 'dateDebut';
+  Array.prototype.forEach.call(document.querySelectorAll('.ouvrirCalendrier'), function (icone) {{
+    icone.onclick = function () {{
+      cibleCourante = icone.getAttribute('data-cible');
+      document.getElementById('calendrier').style.display = 'block';
+    }};
+  }});
   function choisirJour(j) {{
-    jours.push(j);
-    document.getElementById(jours.length === 1 ? 'du' : 'au').value = j;
+    /* Affectation directe : aucun événement n'est émis, comme dans le vrai
+       portail. Et le mois est toujours le même, quel que soit le jour cliqué. */
+    var jour = (j < 10 ? '0' : '') + j;
+    document.getElementById(cibleCourante).value = jour + '/{MOIS_DU_CALENDRIER}';
+    document.getElementById('calendrier').style.display = 'none';
   }}
   document.getElementById('validerJour').onclick = function () {{
-    document.getElementById('calendrier').style.display = 'block';
+    document.getElementById('calendrier').style.display = 'none';
   }};
 </script>"""
         )
 
-    def _telecharger(self) -> None:
+    def _telecharger(self, champs: dict | None = None) -> None:
+        """Livre le relevé de la période demandée — ou refuse, en le disant.
+
+        Le refus est le comportement qui manquait : le portail réel ne renvoie
+        pas un fichier vide, il réaffiche sa page avec un message. Attendre un
+        téléchargement qui ne viendra jamais n'apprend alors rien à personne.
+        """
+        debut = _lire_une_date((champs or {}).get("du", [""])[0])
+        fin = _lire_une_date((champs or {}).get("au", [""])[0])
+        retenues = [
+            operation
+            for operation in OPERATIONS
+            if (jour := _lire_une_date(operation[0])) is not None
+            and (debut is None or jour >= debut)
+            and (fin is None or jour <= fin)
+        ]
+        if not retenues:
+            return self._releves(erreur=REFUS_PERIODE_VIDE)
+
         lignes = ["Date opération;Date valeur;Libellé;Débit;Crédit;Solde"]
-        lignes += [";".join(operation) for operation in OPERATIONS]
+        lignes += [";".join(operation) for operation in retenues]
         self._envoyer(
             ("\n".join(lignes) + "\n").encode("utf-8-sig"),
             type_contenu="text/csv; charset=utf-8",
             entetes={"Content-Disposition": 'attachment; filename="releve.csv"'},
         )
+
+
+def _lire_une_date(texte: str):
+    """Lit une date « jj/mm/aaaa », sinon None."""
+    try:
+        return datetime.strptime((texte or "").strip(), "%d/%m/%Y").date()
+    except ValueError:
+        return None
 
 
 def demarrer_portail(port: int = 0) -> tuple[ThreadingHTTPServer, str]:

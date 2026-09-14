@@ -33,6 +33,14 @@ TOKEN_END = "{{end}}"
 
 ALL_TOKENS = (TOKEN_USERNAME, TOKEN_PASSWORD, TOKEN_OTP, TOKEN_START, TOKEN_END)
 
+#: Une valeur qui ressemble à une date, quel que soit le séparateur ou l'ordre
+#: des composants. Sert à reconnaître un champ de période sans rien savoir du
+#: portail ; la même expression existe côté page, dans `inject.js`.
+RESSEMBLE_A_UNE_DATE = re.compile(r"^\s*\d{1,4}[/\-.]\d{1,2}[/\-.]\d{1,4}\s*$")
+
+#: Libellé d'un clic sur une case de calendrier : « td « 14 » ».
+_CASE_DE_CALENDRIER = re.compile(r"^(?:td|a|span|div)\s+«\s*(\d{1,2})\s*»$")
+
 
 class ActionType(str, Enum):
     """Les gestes qu'un utilisateur pose dans un portail bancaire."""
@@ -148,14 +156,11 @@ class Scenario(BaseModel):
     @property
     def clics_de_calendrier(self) -> list[int]:
         """Numéros des étapes qui ressemblent au choix d'un jour dans un calendrier."""
-        suspects = []
-        for index, step in enumerate(self.steps, start=1):
-            if step.action is not ActionType.CLICK:
-                continue
-            jour = re.match(r"^(?:td|a|span|div)\s+«\s*(\d{1,2})\s*»$", step.label or "")
-            if jour and 1 <= int(jour.group(1)) <= 31:
-                suspects.append(index)
-        return suspects
+        return [
+            index
+            for index, step in enumerate(self.steps, start=1)
+            if est_un_clic_de_jour(step)
+        ]
 
     def contains_secret_values(self) -> list[str]:
         """Repère un secret qui aurait échappé au masquage — filet de sécurité.
@@ -216,6 +221,28 @@ class Scenario(BaseModel):
 def scenario_path(directory: Path, bank: str) -> Path:
     """Emplacement canonique du scénario d'une banque."""
     return Path(directory) / f"{bank}.json"
+
+
+def est_un_clic_de_jour(step: Step) -> bool:
+    """Vrai si ce clic désigne un jour dans un calendrier.
+
+    Le libellé d'un clic est le texte visible de l'élément : une case de
+    calendrier n'en porte qu'un, le numéro du jour. Un nombre hors des jours
+    possibles d'un mois ne peut pas en être un.
+    """
+    if step.action is not ActionType.CLICK:
+        return False
+    jour = _CASE_DE_CALENDRIER.match(step.label or "")
+    return bool(jour) and 1 <= int(jour.group(1)) <= 31
+
+
+def valeur_de_date(step: Step) -> str | None:
+    """Valeur d'une saisie qui ressemble à une date, sinon None."""
+    if step.action is not ActionType.FILL or not step.value:
+        return None
+    if step.value in ALL_TOKENS:
+        return None
+    return step.value if RESSEMBLE_A_UNE_DATE.match(step.value) else None
 
 
 #: En deçà, une suite de clics sur des caractères isolés relève plus vraisemblablement
