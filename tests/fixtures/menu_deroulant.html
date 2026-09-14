@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Portail à menu déroulant</title>
+<style>
+  /* Menu ouvert par la pseudo-classe CSS :hover — il n'existe aucun clic à
+     enregistrer sur le parent, seulement un survol. */
+  #menuPrincipal, #menuPrincipal ul { list-style: none; margin: 0; padding: 0; }
+  #menuPrincipal > li { display: inline-block; position: relative; padding: 8px 14px; }
+  #menuPrincipal > li > ul { display: none; position: absolute; left: 0; top: 100%;
+                             background: #fff; border: 1px solid #ccc; min-width: 200px; }
+  #menuPrincipal > li:hover > ul { display: block; }
+  #menuPrincipal > li > ul > li { padding: 8px 14px; }
+</style></head>
+<body>
+<ul id="menuPrincipal">
+  <li><a href="#">Accueil</a></li>
+  <li>Mes comptes
+    <ul>
+      <li><a href="#">Situation</a></li>
+      <li><a href="#">Soldes</a></li>
+      <li><a href="#" id="cible">Relevés d'opérations</a></li>
+    </ul>
+  </li>
+</ul>
+<p id="resultat">rien</p>
+<script>
+  document.getElementById('cible').onclick = function () {
+    document.getElementById('resultat').textContent = 'releve ouvert';
+  };
+</script>
+</body></html>

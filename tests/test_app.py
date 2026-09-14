@@ -411,3 +411,127 @@ def test_formulaire_de_reglages_present(client):
     page = client.get("/").text
 
     assert "Navigateur à piloter" in page and "Google Chrome" in page
+
+
+# ---------------------------------------------------------------- programmations
+
+
+@pytest.fixture
+def client_programmation(tmp_path, config_path):
+    (tmp_path / "schedules.yaml").write_text(
+        yaml.safe_dump({"smtp": {"host": ""}, "schedules": []}), encoding="utf-8"
+    )
+    return TestClient(
+        creer_application(
+            config_path,
+            schedules_path=tmp_path / "schedules.yaml",
+            state_path=tmp_path / "etat.json",
+            programmateur=False,
+        )
+    )
+
+
+def _programmer(client, **champs):
+    defauts = {
+        "nom": "releve-quotidien",
+        "banque": "",
+        "frequence": "quotidien",
+        "heure": "20:00",
+        "periode": "depuis_derniere_execution",
+        "jours": 30,
+    }
+    return client.post("/api/programmations", json={**defauts, **champs})
+
+
+def test_extraction_quotidienne(client_programmation):
+    """« tous les jours à 20h »."""
+    reponse = _programmer(client_programmation)
+
+    assert reponse.status_code == 200
+    assert "chaque jour à 20:00" in reponse.json()["message"]
+
+
+def test_extraction_hebdomadaire(client_programmation):
+    """« tous les vendredis à 18h30 »."""
+    reponse = _programmer(
+        client_programmation,
+        nom="point-hebdo",
+        frequence="hebdomadaire",
+        jour_semaine=4,
+        heure="18:30",
+    )
+
+    assert "chaque vendredi à 18:30" in reponse.json()["message"]
+
+
+def test_extraction_mensuelle(client_programmation):
+    reponse = _programmer(
+        client_programmation, nom="mensuel", frequence="mensuel", jour_mois=1, heure="06:00"
+    )
+
+    assert "le 1 de chaque mois" in reponse.json()["message"]
+
+
+def test_prochaine_echeance_affichee(client_programmation):
+    _programmer(client_programmation)
+
+    programmations = client_programmation.get("/api/etat").json()["programmations"]
+
+    assert len(programmations) == 1
+    assert programmations[0]["prochaine"]
+    assert programmations[0]["derniere"] is None
+
+
+def test_destinataire_facultatif(client_programmation):
+    _programmer(client_programmation, destinataire="compta@exemple.dz")
+
+    programmation = client_programmation.get("/api/etat").json()["programmations"][0]
+
+    assert programmation["destinataires"] == ["compta@exemple.dz"]
+
+
+def test_sans_destinataire_pas_d_envoi(client_programmation):
+    _programmer(client_programmation)
+
+    assert client_programmation.get("/api/etat").json()["programmations"][0]["destinataires"] == []
+
+
+def test_reprogrammer_remplace(client_programmation):
+    """Deux fois le même nom ne doit pas créer deux programmations."""
+    _programmer(client_programmation, heure="20:00")
+    _programmer(client_programmation, heure="07:00")
+
+    programmations = client_programmation.get("/api/etat").json()["programmations"]
+
+    assert len(programmations) == 1
+    assert "07:00" in programmations[0]["recurrence"]
+
+
+def test_suppression_d_une_programmation(client_programmation):
+    _programmer(client_programmation)
+
+    assert client_programmation.delete("/api/programmations/releve-quotidien").status_code == 200
+    assert client_programmation.get("/api/etat").json()["programmations"] == []
+
+
+def test_suppression_d_une_programmation_absente(client_programmation):
+    assert client_programmation.delete("/api/programmations/fantome").status_code == 404
+
+
+def test_nom_deduit_si_absent(client_programmation):
+    reponse = _programmer(client_programmation, nom="", banque="", frequence="hebdomadaire")
+
+    assert reponse.json()["nom"] == "toutes-hebdomadaire"
+
+
+def test_heure_illisible_refusee(client_programmation):
+    reponse = _programmer(client_programmation, heure="midi")
+
+    assert reponse.status_code in (400, 422)
+
+
+def test_formulaire_de_programmation_present(client_programmation):
+    page = client_programmation.get("/").text
+
+    assert "Extractions programmées" in page
+    assert "Toutes les semaines" in page and "Vendredi" in page

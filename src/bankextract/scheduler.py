@@ -235,10 +235,29 @@ class SchedulerState:
 
 
 def load_scheduler_config(path: Path | str = DEFAULT_SCHEDULES_PATH) -> SchedulerConfig:
+    """Charge le modèle livré, puis les programmations propres au poste.
+
+    Comme pour les banques, ce que l'utilisateur crée depuis l'interface vit
+    dans un fichier séparé : le modèle documenté reste intact et rien de
+    personnel ne part dans le dépôt.
+    """
+    from .config import local_overlay_path
+
     config_path = Path(path)
-    if not config_path.exists():
-        return SchedulerConfig()
-    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    raw: dict = {}
+    if config_path.exists():
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+
+    surcouche_path = local_overlay_path(config_path)
+    if surcouche_path.exists():
+        surcouche = yaml.safe_load(surcouche_path.read_text(encoding="utf-8")) or {}
+        if "smtp" in surcouche:
+            raw["smtp"] = {**raw.get("smtp", {}), **surcouche["smtp"]}
+        # Les programmations de l'utilisateur remplacent celles du modèle,
+        # qui ne sont que des exemples.
+        if "schedules" in surcouche:
+            raw["schedules"] = surcouche["schedules"]
+
     return SchedulerConfig.model_validate(raw)
 
 

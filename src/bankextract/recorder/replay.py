@@ -34,6 +34,12 @@ logger = logging.getLogger(__name__)
 #: suivant plutôt que d'attendre le délai complet sur chacun.
 CANDIDATE_TIMEOUT_MS = 4_000
 
+#: Ouvrir un menu est immédiat : inutile d'attendre longtemps à chaque essai.
+REVEAL_TIMEOUT_MS = 1_500
+
+#: Profondeur de menus imbriqués explorée pour retrouver le parent à survoler.
+PROFONDEUR_MENU = 4
+
 
 class StepFailure(ScrapingError):
     """Une étape du scénario n'a pas pu être rejouée."""
@@ -304,10 +310,73 @@ class ScenarioConnector(BankConnector):
             if element is not None:
                 return element
 
+        # Deuxième chance : l'élément peut être présent mais caché dans un menu
+        # déroulant. L'utilisateur l'avait ouvert d'un survol de souris — un
+        # geste que l'enregistreur ne capte pas, puisqu'il n'est pas un clic.
+        for candidate in step.selectors:
+            element = self._ouvrir_menu_contenant(scope, candidate)
+            if element is not None:
+                logger.info("     ↳ menu déroulant ouvert pour atteindre l'élément")
+                return element
+
         raise StepFailure(
             "aucun sélecteur ne correspond — le portail a peut-être changé. "
             f"Candidats essayés : {', '.join(errors) or 'aucun'}"
         )
+
+    def _ouvrir_menu_contenant(self, scope, selecteur: str):
+        """Déplie le menu qui masque l'élément visé, puis le renvoie.
+
+        Deux mécaniques coexistent dans les portails : les menus ouverts par la
+        pseudo-classe CSS `:hover`, qui exigent un vrai déplacement de souris,
+        et ceux pilotés par script, qui se contentent des événements de survol.
+        Les deux sont tentées, du parent le plus extérieur au plus proche.
+        """
+        try:
+            element = scope.wait_for_selector(
+                selecteur, state="attached", timeout=REVEAL_TIMEOUT_MS
+            )
+        except Exception:
+            return None
+        if element is None:
+            return None
+
+        cible = scope.locator(selecteur).first
+        for niveau in range(PROFONDEUR_MENU, 0, -1):
+            ancetre = cible.locator(f"xpath=ancestor::li[{niveau}]")
+            try:
+                if ancetre.count() == 0:
+                    continue
+                premier = ancetre.first
+                if premier.is_visible():
+                    premier.hover(timeout=REVEAL_TIMEOUT_MS)
+                    if element.is_visible():
+                        return element
+            except Exception:
+                continue
+
+        # Menus pilotés par script : on remonte la chaîne des parents en
+        # émettant les événements de survol qu'ils attendent.
+        try:
+            element.evaluate(
+                """cible => {
+                    const types = ['pointerover', 'mouseover', 'mouseenter'];
+                    let noeud = cible;
+                    let remontees = 0;
+                    while (noeud && noeud !== document.body && remontees < 6) {
+                        for (const type of types) {
+                            noeud.dispatchEvent(new MouseEvent(type, {bubbles: true}));
+                        }
+                        noeud = noeud.parentElement;
+                        remontees += 1;
+                    }
+                }"""
+            )
+            if element.is_visible():
+                return element
+        except Exception:
+            return None
+        return None
 
     def _frame(self, session: BrowserSession, step: Step):
         """Retrouve l'iframe dans laquelle l'action avait été enregistrée."""

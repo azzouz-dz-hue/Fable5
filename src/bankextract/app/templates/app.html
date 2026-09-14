@@ -214,6 +214,74 @@
   </section>
 
   <section class="carte">
+    <h2>Extractions programmées <span class="compte" id="compte-programmations"></span></h2>
+    <div id="liste-programmations"></div>
+
+    <form class="grille" id="formulaire-programmation" style="margin-top:16px">
+      <div>
+        <label for="p-nom">Nom</label>
+        <input id="p-nom" name="nom" placeholder="relevé quotidien">
+      </div>
+      <div>
+        <label for="p-banque">Banque</label>
+        <select id="p-banque" name="banque"></select>
+      </div>
+      <div>
+        <label for="p-frequence">Fréquence</label>
+        <select id="p-frequence" name="frequence" onchange="majFrequence()">
+          <option value="quotidien">Tous les jours</option>
+          <option value="hebdomadaire">Toutes les semaines</option>
+          <option value="mensuel">Tous les mois</option>
+        </select>
+      </div>
+      <div>
+        <label for="p-heure">À quelle heure</label>
+        <input id="p-heure" name="heure" type="time" value="20:00">
+      </div>
+      <div id="bloc-jour-semaine" hidden>
+        <label for="p-jour-semaine">Quel jour</label>
+        <select id="p-jour-semaine" name="jour_semaine">
+          <option value="0">Lundi</option><option value="1">Mardi</option>
+          <option value="2">Mercredi</option><option value="3">Jeudi</option>
+          <option value="4">Vendredi</option><option value="5">Samedi</option>
+          <option value="6">Dimanche</option>
+        </select>
+      </div>
+      <div id="bloc-jour-mois" hidden>
+        <label for="p-jour-mois">Quel jour du mois</label>
+        <input id="p-jour-mois" name="jour_mois" type="number" value="1" min="1" max="31">
+      </div>
+      <div>
+        <label for="p-periode">Période extraite</label>
+        <select id="p-periode" name="periode">
+          <option value="depuis_derniere_execution">Depuis la dernière fois</option>
+          <option value="derniers_jours">Les derniers jours</option>
+          <option value="mois_en_cours">Le mois en cours</option>
+          <option value="mois_precedent">Le mois précédent</option>
+        </select>
+      </div>
+      <div>
+        <label for="p-jours">Nombre de jours</label>
+        <input id="p-jours" name="jours" type="number" value="30" min="1" max="3650">
+      </div>
+      <div class="pleine-largeur">
+        <label for="p-destinataire">Envoyer les relevés à (facultatif)</label>
+        <input id="p-destinataire" name="destinataire" type="email" placeholder="compta@exemple.dz">
+        <p class="aide">Laissez vide pour alimenter la base sans envoyer de courriel.</p>
+      </div>
+      <div class="pleine-largeur actions">
+        <button type="submit" class="principal">Programmer</button>
+      </div>
+    </form>
+
+    <p class="aide" style="margin-top:14px">
+      Les extractions se déclenchent tant que BankExtract reste ouvert. Gardez la
+      fenêtre noire en fonctionnement, et l'ordinateur allumé à l'heure prévue.
+      Une exécution manquée est rattrapée au démarrage suivant.
+    </p>
+  </section>
+
+  <section class="carte">
     <h2>Réglages</h2>
     <form class="grille" id="formulaire-reglages">
       <div>
@@ -340,6 +408,51 @@ function afficherBanques(banques) {
     </div>`).join("");
 }
 
+function afficherProgrammations(programmations, banques) {
+  $("compte-programmations").textContent = programmations.length ? `(${programmations.length})` : "";
+  $("liste-programmations").innerHTML = programmations.length
+    ? programmations.map((p) => `
+      <div class="banque">
+        <div class="banque-entete">
+          <div>
+            <div class="banque-nom">${p.nom}</div>
+            <div class="banque-detail">
+              ${p.recurrence} · ${p.banques.join(", ")} · ${p.periode.replace(/_/g, " ")}
+              ${p.destinataires.length ? " · envoi à " + p.destinataires.join(", ") : ""}
+            </div>
+            <div class="banque-detail">
+              Prochaine : ${p.prochaine}${p.derniere ? " · dernière : " + p.derniere : ""}
+            </div>
+          </div>
+          <button class="discret" onclick="retirerProgrammation('${p.nom.replace(/'/g, "\\'")}')"
+                  ${occupe ? "disabled" : ""}>Supprimer</button>
+        </div>
+      </div>`).join("")
+    : `<p class="vide">Aucune extraction programmée.</p>`;
+
+  const choix = $("p-banque");
+  const actuel = choix.value;
+  choix.innerHTML = `<option value="">Toutes les banques</option>` +
+    banques.map((b) => `<option value="${b.cle}">${b.libelle}</option>`).join("");
+  choix.value = actuel;
+}
+
+function majFrequence() {
+  const frequence = $("p-frequence").value;
+  $("bloc-jour-semaine").hidden = frequence !== "hebdomadaire";
+  $("bloc-jour-mois").hidden = frequence !== "mensuel";
+}
+
+async function retirerProgrammation(nom) {
+  if (!confirm(`Supprimer la programmation « ${nom} » ?`)) return;
+  try {
+    await appeler(`/api/programmations/${encodeURIComponent(nom)}`, { method: "DELETE" });
+    await rafraichir();
+  } catch (erreur) {
+    alert(erreur.message);
+  }
+}
+
 function afficherOperation(operation) {
   if (!operation) { $("bloc-operation").hidden = true; return; }
   $("bloc-operation").hidden = false;
@@ -385,6 +498,7 @@ async function rafraichir() {
     $("bouton-diagnostic").disabled = occupe;
     navigateurPret = etat.navigateur_pret;
     afficherBanques(etat.banques);
+    afficherProgrammations(etat.programmations, etat.banques);
     afficherOperation(etat.operation);
   } catch (erreur) {
     console.error(erreur);
@@ -468,6 +582,23 @@ $("formulaire-identifiants").addEventListener("submit", async (evenement) => {
   }
 });
 
+$("formulaire-programmation").addEventListener("submit", async (evenement) => {
+  evenement.preventDefault();
+  const donnees = Object.fromEntries(new FormData(evenement.target));
+  donnees.jour_semaine = Number(donnees.jour_semaine || 0);
+  donnees.jour_mois = Number(donnees.jour_mois || 1);
+  donnees.jours = Number(donnees.jours || 30);
+  try {
+    const reponse = await appeler("/api/programmations", {
+      method: "POST", body: JSON.stringify(donnees),
+    });
+    await rafraichir();
+    alert(reponse.message);
+  } catch (erreur) {
+    alert(erreur.message);
+  }
+});
+
 $("formulaire-reglages").addEventListener("submit", async (evenement) => {
   evenement.preventDefault();
   const donnees = Object.fromEntries(new FormData(evenement.target));
@@ -496,6 +627,7 @@ $("formulaire-banque").addEventListener("submit", async (evenement) => {
   }
 });
 
+majFrequence();
 rafraichir();
 setInterval(rafraichir, 1500);
 </script>

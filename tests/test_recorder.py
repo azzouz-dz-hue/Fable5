@@ -579,3 +579,65 @@ def test_fermeture_de_la_fenetre_detectee(settings, tmp_path):
             contexte.close()
 
     assert duree < 10, "la fermeture doit être vue en quelques secondes"
+
+
+# ---------------------------------------------------------------- menus déroulants
+
+PAGE_MENU = Path(__file__).parent / "fixtures" / "menu_deroulant.html"
+
+
+@navigateur
+def test_element_cache_dans_un_menu_deroulant(settings, tmp_path):
+    """Le défaut rencontré chez NATIXIS : le lien visé vit dans un sous-menu.
+
+    L'utilisateur l'avait atteint en survolant le menu parent — un geste que
+    l'enregistreur ne capte pas, puisque ce n'est pas un clic. Au rejeu, le
+    lien est présent mais invisible, donc introuvable par la voie normale.
+    """
+    from bankextract.browser import ephemeral_browser
+
+    connecteur = ScenarioConnector(
+        config=BankConfig(
+            connector="scenario", options={"scenario_path": str(tmp_path / "x.json")}
+        ),
+        settings=settings,
+    )
+    etape = Step(
+        action=ActionType.CLICK,
+        selectors=[
+            'text="Relevés d\'opérations"',
+            "#menuPrincipal > li:nth-of-type(2) > ul > li:nth-of-type(3) > a",
+        ],
+        label="a « Relevés d'opérations »",
+    )
+
+    with ephemeral_browser(settings.browser) as session:
+        session.goto(PAGE_MENU.as_uri())
+        assert not session.page.locator("#cible").is_visible(), "le lien doit être caché"
+
+        element = connecteur._resolve(session, etape)
+        element.click()
+        session.page.wait_for_timeout(200)
+        resultat = session.page.inner_text("#resultat")
+
+    assert resultat == "releve ouvert"
+
+
+@navigateur
+def test_element_vraiment_absent_reste_une_erreur(settings, tmp_path):
+    """Ouvrir les menus ne doit pas masquer un vrai changement de portail."""
+    from bankextract.browser import ephemeral_browser
+    from bankextract.recorder.replay import StepFailure
+
+    connecteur = ScenarioConnector(
+        config=BankConfig(
+            connector="scenario", options={"scenario_path": str(tmp_path / "x.json")}
+        ),
+        settings=settings,
+    )
+    etape = Step(action=ActionType.CLICK, selectors=["#nexiste-pas"], label="lien disparu")
+
+    with ephemeral_browser(settings.browser) as session:
+        session.goto(PAGE_MENU.as_uri())
+        with pytest.raises(StepFailure, match="aucun sélecteur ne correspond"):
+            connecteur._resolve(session, etape)
