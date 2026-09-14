@@ -145,14 +145,24 @@ class BrowserSession:
             logger.warning("Capture d'écran impossible : %s", exc)
             return None
 
-    def download_to(self, trigger, destination_dir: Path, filename: str | None = None) -> Path:
+    def download_to(
+        self,
+        trigger,
+        destination_dir: Path,
+        filename: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> Path:
         """Exécute `trigger()` et enregistre le téléchargement déclenché.
 
         `trigger` est un appelable qui provoque le téléchargement (un clic, en
         général) ; Playwright attend l'événement à notre place.
+
+        L'attente a son propre délai : produire un relevé prend parfois bien
+        plus de temps qu'afficher une page, et les deux n'ont pas à être réglés
+        ensemble.
         """
         destination_dir.mkdir(parents=True, exist_ok=True)
-        with self.page.expect_download(timeout=self.config.timeout_ms) as info:
+        with self.page.expect_download(timeout=timeout_ms or self.config.timeout_ms) as info:
             trigger()
         download = info.value
         target = destination_dir / (filename or download.suggested_filename or "releve.pdf")

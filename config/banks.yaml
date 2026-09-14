@@ -204,6 +204,14 @@ banks:
       # Mettre à false pour se contenter d'archiver les PDF officiels.
       parse_downloads: true
 
+      # Format dans lequel écrire les dates de période sur le portail.
+      date_format: "%d/%m/%Y"
+
+      # Attente accordée au relevé après le clic, en millisecondes. À augmenter
+      # si la banque met longtemps à le produire ; sans valeur, le délai général
+      # du navigateur s'applique.
+      # download_timeout_ms: 120000
+
       # Format attendu par les champs de date du portail, utilisé pour
       # remplacer les jetons {{start}} et {{end}} du parcours.
       date_format: "%d/%m/%Y"

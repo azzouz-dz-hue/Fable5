@@ -103,6 +103,12 @@ class ScenarioConnector(BankConnector):
     ) -> list[Transaction]:
         return []
 
+    @property
+    def _delai_de_telechargement(self) -> int:
+        """Attente accordée au relevé, réglable à part du délai des pages."""
+        configure = (self.config.options or {}).get("download_timeout_ms")
+        return int(configure) if configure else self.settings.browser.timeout_ms
+
     def _declared_account(self) -> Account:
         options = self.config.options or {}
         return Account(
@@ -282,7 +288,11 @@ class ScenarioConnector(BankConnector):
             self._cliquer(target)
         elif step.action is ActionType.DOWNLOAD:
             try:
-                return session.download_to(lambda: self._cliquer(target), destination)
+                return session.download_to(
+                    lambda: self._cliquer(target),
+                    destination,
+                    timeout_ms=self._delai_de_telechargement,
+                )
             except Exception as exc:
                 message = self._message_affiche(session)
                 if message:

@@ -96,13 +96,13 @@ def identifiants(monkeypatch):
     monkeypatch.setenv("BANKEXTRACT_NATIXIS_PASSWORD", MOT_DE_PASSE)
 
 
-def _rejouer(settings, chemin, debut=date(2026, 1, 1), fin=date(2026, 12, 31)):
+def _rejouer(settings, chemin, debut=date(2026, 1, 1), fin=date(2026, 12, 31), **options):
     connecteur = ScenarioConnector(
         config=BankConfig(
             connector="scenario",
             label="NATIXIS - MM",
             history_days=400,
-            options={"scenario_path": str(chemin), "account_number": COMPTE},
+            options={"scenario_path": str(chemin), "account_number": COMPTE, **options},
             otp=OtpConfig(provider="manual"),
         ),
         settings=settings,
@@ -304,9 +304,17 @@ def test_une_periode_sans_ecriture_est_expliquee_par_la_banque(
     raison de son refus.
     """
     _, chemin = parcours_enregistre
-    settings.browser.timeout_ms = 4_000
 
-    resultat = _rejouer(settings, chemin, debut=date(2026, 8, 1), fin=date(2026, 8, 31))
+    # Seule l'attente du fichier est raccourcie : réduire le délai des pages
+    # ferait échouer l'ouverture du portail sur une machine lente, et le test
+    # ne dirait plus rien de ce qu'il prétend vérifier.
+    resultat = _rejouer(
+        settings,
+        chemin,
+        debut=date(2026, 8, 1),
+        fin=date(2026, 8, 31),
+        download_timeout_ms=4_000,
+    )
 
     rapport = " ".join(resultat.errors)
     assert REFUS_PERIODE_VIDE in rapport, rapport
