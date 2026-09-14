@@ -726,3 +726,59 @@ def test_les_marques_posees_sur_la_page_sont_retirees(settings, tmp_path):
         restantes = session.page.locator(f"[{MARQUEUR_MENU}]").count()
 
     assert restantes == 0
+
+
+# ---------------------------------------------------------------- période figée
+
+
+def test_periode_choisie_dans_un_calendrier_est_signalee():
+    """Le cas relevé chez NATIXIS : les dates sont cliquées, non tapées.
+
+    Une date tapée devient un jeton, et chaque extraction couvre la bonne
+    période. Une date cliquée n'est qu'une suite de clics : elle rejouera
+    éternellement le même mois, ce qui rend une programmation sans objet.
+    """
+    scenario = Scenario(
+        bank="natixis",
+        steps=[
+            Step(action=ActionType.CLICK, selectors=["i"], label="i « calendrier »"),
+            Step(action=ActionType.CLICK, selectors=["td"], label="td « 1 »"),
+            Step(action=ActionType.CLICK, selectors=["span"], label="span « Valider »"),
+            Step(action=ActionType.CLICK, selectors=["td"], label="td « 30 »"),
+        ],
+    )
+
+    assert scenario.periode_figee is True
+    assert scenario.clics_de_calendrier == [2, 4]
+
+
+def test_dates_tapees_ne_sont_pas_une_periode_figee():
+    scenario = Scenario(
+        bank="x",
+        steps=[
+            Step(action=ActionType.FILL, selectors=["#du"], value=TOKEN_START),
+            Step(action=ActionType.FILL, selectors=["#au"], value=TOKEN_END),
+            Step(action=ActionType.CLICK, selectors=["td"], label="td « 1 »"),
+        ],
+    )
+
+    assert scenario.periode_figee is False
+
+
+def test_un_parcours_sans_calendrier_n_est_pas_signale():
+    scenario = Scenario(
+        bank="x",
+        steps=[Step(action=ActionType.CLICK, selectors=["a"], label="a « Relevés »")],
+    )
+
+    assert scenario.periode_figee is False
+
+
+def test_un_nombre_hors_calendrier_ne_trompe_pas():
+    """« td « 42 » » n'est pas un jour du mois."""
+    scenario = Scenario(
+        bank="x",
+        steps=[Step(action=ActionType.CLICK, selectors=["td"], label="td « 42 »")],
+    )
+
+    assert scenario.periode_figee is False

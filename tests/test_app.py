@@ -1,6 +1,7 @@
 """Interface graphique locale."""
 
 import time
+from pathlib import Path
 
 import pytest
 import yaml
@@ -578,3 +579,34 @@ def test_capture_la_plus_recente(client, tmp_path):
     os.utime(ancienne, (1, 1))
 
     assert client.get("/api/capture").content == b"recente"
+
+
+def test_periode_figee_signalee_sur_la_fiche(client, config_path, tmp_path):
+    """L'utilisateur doit le savoir avant de programmer des extractions."""
+    import json
+
+    _ajouter(client)
+    parcours = Path("scenarios") / "bna.json"
+    parcours.parent.mkdir(parents=True, exist_ok=True)
+    parcours.write_text(
+        json.dumps(
+            {
+                "bank": "bna",
+                "steps": [
+                    {"action": "click", "selectors": ["td"], "label": "td « 1 »"},
+                    {"action": "click", "selectors": ["td"], "label": "td « 30 »"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    try:
+        banque = client.get("/api/etat").json()["banques"][0]
+    finally:
+        parcours.unlink(missing_ok=True)
+
+    assert banque["periode_figee"] is True
+
+
+def test_mention_de_periode_figee_dans_la_page(client):
+    assert "Période figée" in client.get("/").text

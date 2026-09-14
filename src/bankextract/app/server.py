@@ -342,6 +342,19 @@ def creer_application(
             if fuites:
                 operation.lignes.append(f"ATTENTION : {'; '.join(fuites)}")
 
+            if scenario.periode_figee:
+                etapes = ", ".join(str(n) for n in scenario.clics_de_calendrier)
+                operation.lignes.append(
+                    f"ATTENTION : période figée. Les dates ont été choisies dans un "
+                    f"calendrier (étapes {etapes}), non tapées au clavier : chaque "
+                    "extraction reprendra la même période."
+                )
+                operation.lignes.append(
+                    "Pour une extraction programmée, réenregistrez le parcours en "
+                    "laissant la période proposée par défaut, ou en tapant les dates "
+                    "si le portail le permet."
+                )
+
             chemin = Path((config.options or {}).get("scenario_path", f"scenarios/{cle}.json"))
             scenario.save(chemin)
             if not scenario.downloads:
@@ -550,9 +563,19 @@ def _decrire_banque(nom: str, config: BankConfig, settings: Settings) -> dict:
     except Exception:
         identifiants_prets = False
 
+    periode_figee = False
+    if chemin_parcours.exists():
+        try:
+            from ..recorder import Scenario
+
+            periode_figee = Scenario.load(chemin_parcours).periode_figee
+        except Exception:
+            logger.debug("Parcours %s illisible", chemin_parcours)
+
     return {
         "cle": nom,
         "libelle": config.display_name,
+        "periode_figee": periode_figee,
         "url": options.get("base_url", ""),
         "numero_compte": options.get("account_number", ""),
         "devise": options.get("currency", "DZD"),

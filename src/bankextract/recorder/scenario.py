@@ -132,6 +132,31 @@ class Scenario(BaseModel):
     def uses_period(self) -> bool:
         return any(step.value in (TOKEN_START, TOKEN_END) for step in self.steps)
 
+    @property
+    def periode_figee(self) -> bool:
+        """Vrai si la période a été choisie dans un calendrier, donc figée.
+
+        Une date tapée au clavier devient un jeton, et chaque extraction couvre
+        alors la bonne période. Une date choisie en cliquant des cases de
+        calendrier n'est qu'une suite de clics : elle rejouera éternellement le
+        même mois, ce qui rend une extraction programmée sans objet.
+        """
+        if self.uses_period:
+            return False
+        return bool(self.clics_de_calendrier)
+
+    @property
+    def clics_de_calendrier(self) -> list[int]:
+        """Numéros des étapes qui ressemblent au choix d'un jour dans un calendrier."""
+        suspects = []
+        for index, step in enumerate(self.steps, start=1):
+            if step.action is not ActionType.CLICK:
+                continue
+            jour = re.match(r"^(?:td|a|span|div)\s+«\s*(\d{1,2})\s*»$", step.label or "")
+            if jour and 1 <= int(jour.group(1)) <= 31:
+                suspects.append(index)
+        return suspects
+
     def contains_secret_values(self) -> list[str]:
         """Repère un secret qui aurait échappé au masquage — filet de sécurité.
 
